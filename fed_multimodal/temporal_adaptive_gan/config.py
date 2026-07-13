@@ -22,10 +22,10 @@ class TemporalAdaptiveGANConfig:
     g_steps: int = 3
     lambda_d_fake: float = 1.0
     lambda_adv: float = 0.5
-    lambda_avoid: float = 0.3
+    lambda_avoid: float = 0.5  # 提高逃避fake类权重（原 0.3）
     lambda_fm: float = 0.5
     lambda_var: float = 0.3
-    lambda_div: float = 0.2
+    lambda_div: float = 0.05  # 降低diversity权重（原 0.2）
     lambda_stat: float = 0.2
     lambda_audio_dist: float = 0.1
     audio_kurtosis_weight: float = 0.1
@@ -34,7 +34,7 @@ class TemporalAdaptiveGANConfig:
     video_out_max: float = 20.0
     video_scale_max: float = 8.0
     warmup_epochs: int = 5
-    diversity_start_epoch: int = 3
+    diversity_start_epoch: int = 10  # 延迟diversity启动（原 3）
     diversity_warmup_epochs: int = 5
     r1_gamma: float = 10.0
     r1_interval: int = 16

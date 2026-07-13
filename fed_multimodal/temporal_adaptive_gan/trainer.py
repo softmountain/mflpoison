@@ -120,13 +120,17 @@ class TemporalAdaptiveGANTrainer:
             real_video_d = real_video_d.detach().requires_grad_(True)
 
         self.opt_d.zero_grad(set_to_none=True)
-        logits_real, emb_real = self.discriminator(
-            real_audio_d,
-            real_video_d,
-            len_a,
-            len_v,
-            return_embed=True,
-        )
+
+        # Disable cuDNN for RNN backward when computing R1 penalty (needs create_graph=True)
+        with torch.backends.cudnn.flags(enabled=(not use_r1)):
+            logits_real, emb_real = self.discriminator(
+                real_audio_d,
+                real_video_d,
+                len_a,
+                len_v,
+                return_embed=True,
+            )
+
         logits_fake = self.discriminator(
             fake_audio_d,
             fake_video_d,

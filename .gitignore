@@ -54,8 +54,9 @@ tmp/
 *.swp
 *.swo
 
-# ===== Claude Code 辅助文件（不上传） =====
+# ===== Claude Code 个人配置（不上传） =====
 .claude/
-CLAUDE.md
 **/.claude/
-**/CLAUDE.md
+
+# ===== Agent 通用规则文件（上传，供 Claude Code / Codex 等读取） =====
+# CLAUDE.md 和 AGENTS.md 包含项目公共规则，不从版本控制排除
