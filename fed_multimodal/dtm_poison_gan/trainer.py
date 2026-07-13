@@ -153,7 +153,23 @@ class DTMGANTrainer:
             self.config.fake_class,
             self.config.lambda_d_fake,
         )
+        if not torch.isfinite(loss):
+            print(
+                "[D-skip] non-finite d_loss "
+                f"lr_fin={torch.isfinite(logits_real).all().item()} "
+                f"lf_fin={torch.isfinite(logits_fake).all().item()} "
+                f"fa_fin={torch.isfinite(fake_audio).all().item()} "
+                f"fv_fin={torch.isfinite(fake_video).all().item()} "
+                f"re_fin={torch.isfinite(real_embeddings).all().item()}",
+                flush=True,
+            )
+            self.opt_d.zero_grad(set_to_none=True)
+            return metrics
         loss.backward()
+        if self.config.grad_clip and self.config.grad_clip > 0:
+            torch.nn.utils.clip_grad_norm_(
+                self.discriminator.parameters(), self.config.grad_clip
+            )
         self.opt_d.step()
         self.bank.update(real_embeddings, real_labels)
         return metrics
@@ -220,8 +236,34 @@ class DTMGANTrainer:
                 len_video=fake_len_video,
                 epoch=epoch,
             )
-            loss.backward()
-            self.opt_g.step()
+            if not torch.isfinite(loss):
+                print(
+                    f"[G-skip ep{epoch}] non-finite g_loss "
+                    f"fa_fin={torch.isfinite(fake_audio).all().item()} "
+                    f"fv_fin={torch.isfinite(fake_video).all().item()} "
+                    f"lf_fin={torch.isfinite(logits_fake).all().item()} "
+                    f"fe_fin={torch.isfinite(fake_embeddings).all().item()} "
+                    f"re_fin={torch.isfinite(real_embeddings).all().item()}",
+                    flush=True,
+                )
+                for _k, _v in metrics.items():
+                    if isinstance(_v, float) and _v != _v:
+                        print(f"   nan component: {_k}", flush=True)
+                self.opt_g.zero_grad(set_to_none=True)
+            else:
+                loss.backward()
+                _bad = [n for n, p in self.generator.named_parameters()
+                        if p.grad is not None and not torch.isfinite(p.grad).all()]
+                if _bad:
+                    print(f"[G-grad-skip ep{epoch}] non-finite grad in "
+                          f"{len(_bad)} params; first: {_bad[:5]}", flush=True)
+                    self.opt_g.zero_grad(set_to_none=True)
+                else:
+                    if self.config.grad_clip and self.config.grad_clip > 0:
+                        torch.nn.utils.clip_grad_norm_(
+                            self.generator.parameters(), self.config.grad_clip
+                        )
+                    self.opt_g.step()
         finally:
             for parameter, requires_grad in zip(
                 self.discriminator.parameters(),

@@ -69,6 +69,7 @@ def parse_args():
         default=None,
         help="Optional server-broadcast ClassEmbeddingBank checkpoint",
     )
+    parser.add_argument("--resume", default=None, help="Resume from checkpoint path")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
         "--device",
@@ -131,10 +132,16 @@ def main():
     if args.prototype_path:
         trainer.load_prototypes(args.prototype_path)
 
+    start_epoch = 1
+    if args.resume:
+        ckpt = trainer.load_checkpoint(args.resume, load_optimizers=True)
+        start_epoch = (ckpt.get("epoch", 0) or 0) + 1
+        print(f"Resumed from {args.resume}, starting epoch {start_epoch}", flush=True)
+
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     history = []
-    for epoch in range(1, args.epochs + 1):
+    for epoch in range(start_epoch, args.epochs + 1):
         train_metrics = trainer.train_epoch(
             epoch,
             max_batches=args.max_batches,

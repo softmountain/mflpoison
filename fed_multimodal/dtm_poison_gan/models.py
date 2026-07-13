@@ -153,6 +153,10 @@ class DTMGenerator(nn.Module):
             align_corners=False,
         ).transpose(1, 2)
         audio = self.audio_calibration(audio, len_audio)
+        if self.config.audio_out_max > 0:
+            audio = audio.clamp(
+                min=-self.config.audio_out_max, max=self.config.audio_out_max
+            )
 
         frame_noise = torch.randn(
             z.size(0),

@@ -166,7 +166,7 @@ def audio_tail_loss(fake_audio, real_audio, lengths=None, eps=1e-5):
     def standardized_moments(values):
         mean = values.mean(dim=0)
         std = values.std(dim=0, unbiased=False).clamp_min(eps)
-        normalized = (values - mean) / std
+        normalized = ((values - mean) / std).clamp(-10.0, 10.0)
         return normalized.pow(3).mean(dim=0), normalized.pow(4).mean(dim=0) - 3.0
 
     fake_skew, fake_kurtosis = standardized_moments(fake)

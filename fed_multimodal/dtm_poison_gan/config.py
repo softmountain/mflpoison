@@ -32,11 +32,13 @@ class DTMGANConfig:
     diversity_warmup_epochs: int = 5
     audio_stats_momentum: float = 0.95
     video_out_max: float = 20.0
+    audio_out_max: float = 50.0
     video_scale_max: float = 8.0
     target_strategy: str = "same_as_real"
     fixed_target: int = -1
     mixed_target_prob: float = 0.7
     freeze_d: str = "backbone"
+    grad_clip: float = 0.0
     seed: int = 42
 
     def __post_init__(self):
