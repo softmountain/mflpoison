@@ -1,0 +1,8 @@
+{
+  "attack_mode": "label_flip",
+  "target_strategy": "fixed",
+  "source_class": 1,
+  "target_class": 0,
+  "poison_ratio": 0.2,
+  "malicious_clients": 1
+}

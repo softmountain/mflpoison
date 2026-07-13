@@ -2,6 +2,8 @@ from pathlib import Path
 
 import torch
 
+from mflpoison.training.stability import second_order_rnn_context
+
 from fed_multimodal.poison_gan.kplus1 import trainable_parameters
 from .losses import discriminator_loss, generator_loss, r1_gradient_penalty
 from fed_multimodal.poison_gan.memory_bank import ClassEmbeddingBank
@@ -120,13 +122,16 @@ class TemporalAdaptiveGANTrainer:
             real_video_d = real_video_d.detach().requires_grad_(True)
 
         self.opt_d.zero_grad(set_to_none=True)
-        logits_real, emb_real = self.discriminator(
-            real_audio_d,
-            real_video_d,
-            len_a,
-            len_v,
-            return_embed=True,
-        )
+        # Lazy R1 needs double backward. cuDNN RNN kernels do not support it,
+        # so use native RNN operations only for the affected real forward.
+        with second_order_rnn_context(enabled=use_r1):
+            logits_real, emb_real = self.discriminator(
+                real_audio_d,
+                real_video_d,
+                len_a,
+                len_v,
+                return_embed=True,
+            )
         logits_fake = self.discriminator(
             fake_audio_d,
             fake_video_d,

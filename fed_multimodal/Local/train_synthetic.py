@@ -87,6 +87,8 @@ def parse_args():
     # Training arguments
     parser.add_argument('--num_epochs', type=int, default=100,
                         help='Number of training epochs')
+    parser.add_argument('--val_split', type=float, default=0.1,
+                        help='Fraction of the real training split used for model selection')
     parser.add_argument('--batch_size', type=int, default=32,
                         help='Batch size')
     parser.add_argument('--learning_rate', type=float, default=0.001,
@@ -114,6 +116,8 @@ def parse_args():
                         help='Output directory')
 
     args = parser.parse_args()
+    if not 0.0 < args.val_split < 1.0:
+        parser.error('--val_split must be between 0 and 1')
     return args
 
 
@@ -225,12 +229,25 @@ def main():
     logging.info(f"Loading synthetic data from {args.synthetic_data}")
     synth_data = torch.load(args.synthetic_data)
 
-    # Support both formats
-    audio_syn = synth_data.get('audio_features', synth_data.get('audio'))
-    video_syn = synth_data.get('video_features', synth_data.get('video'))
-    labels_syn = synth_data.get('labels', synth_data.get('train_label'))
-    audio_len_syn = synth_data.get('audio_lengths', synth_data.get('len_a', None))
-    video_len_syn = synth_data.get('video_lengths', synth_data.get('len_v', None))
+    # Prefer the canonical refactored schema while keeping legacy files readable.
+    if 'features' in synth_data:
+        from mflpoison.core.types import SyntheticBatch
+
+        canonical = SyntheticBatch.from_dict(synth_data)
+        audio_syn = canonical.features['audio']
+        video_syn = canonical.features['video']
+        labels_syn = canonical.train_labels
+        audio_len_syn = canonical.lengths['audio']
+        video_len_syn = canonical.lengths['video']
+    else:
+        audio_syn = synth_data.get('audio_features', synth_data.get('audio'))
+        video_syn = synth_data.get('video_features', synth_data.get('video'))
+        labels_syn = synth_data.get('labels', synth_data.get('train_label'))
+        audio_len_syn = synth_data.get('audio_lengths', synth_data.get('len_a', None))
+        video_len_syn = synth_data.get('video_lengths', synth_data.get('len_v', None))
+
+    if audio_syn is None or video_syn is None or labels_syn is None:
+        raise ValueError('Synthetic file is missing audio, video, or training labels')
 
     logging.info(f"Loaded {len(labels_syn)} synthetic samples")
     logging.info(f"  Audio shape: {audio_syn.shape}")
@@ -258,7 +275,8 @@ def main():
         split_idx=args.split_idx,
         num_workers=args.num_workers
     )
-    dataloaders = dm.get_dataloaders(val_split=0.0)  # No validation split
+    dataloaders = dm.get_dataloaders(val_split=args.val_split)
+    val_loader = dataloaders['val']
     test_loader = dataloaders['test']
 
     # Get dimensions from real data
@@ -302,14 +320,15 @@ def main():
     # Training loop
     logging.info(f"Starting training for {args.num_epochs} epochs")
 
-    best_test_acc = 0.0
+    best_val_acc = float('-inf')
+    best_state = None
     history = {
         'train_loss': [],
         'train_acc': [],
-        'test_loss': [],
-        'test_acc': [],
-        'test_uar': [],
-        'test_f1': []
+        'val_loss': [],
+        'val_acc': [],
+        'val_uar': [],
+        'val_f1': []
     }
 
     for epoch in range(1, args.num_epochs + 1):
@@ -318,9 +337,9 @@ def main():
             model, synth_loader, criterion, optimizer, device, num_classes
         )
 
-        # Evaluate on real test data
-        test_loss, test_acc, test_uar, test_f1 = evaluate(
-            model, test_loader, criterion, device, num_classes
+        # Select the checkpoint on held-out real training data, never on test data.
+        val_loss, val_acc, val_uar, val_f1 = evaluate(
+            model, val_loader, criterion, device, num_classes
         )
 
         # Update scheduler
@@ -330,30 +349,41 @@ def main():
         # Record history
         history['train_loss'].append(train_loss)
         history['train_acc'].append(train_acc)
-        history['test_loss'].append(test_loss)
-        history['test_acc'].append(test_acc)
-        history['test_uar'].append(test_uar)
-        history['test_f1'].append(test_f1)
+        history['val_loss'].append(val_loss)
+        history['val_acc'].append(val_acc)
+        history['val_uar'].append(val_uar)
+        history['val_f1'].append(val_f1)
 
         # Log
         if epoch % args.log_interval == 0 or epoch == 1:
             logging.info(
                 f"Epoch {epoch:3d}/{args.num_epochs} | "
                 f"Train Loss: {train_loss:.4f} Acc: {train_acc:.2f}% | "
-                f"Test Loss: {test_loss:.4f} Acc: {test_acc:.2f}% UAR: {test_uar:.2f}% F1: {test_f1:.2f}%"
+                f"Val Loss: {val_loss:.4f} Acc: {val_acc:.2f}% "
+                f"UAR: {val_uar:.2f}% F1: {val_f1:.2f}%"
             )
 
-        # Track best
-        if test_acc > best_test_acc:
-            best_test_acc = test_acc
+        if val_acc > best_val_acc:
+            best_val_acc = val_acc
+            best_state = {
+                name: value.detach().cpu().clone()
+                for name, value in model.state_dict().items()
+            }
 
-    # Final evaluation
+    # Evaluate the test set exactly once using the validation-selected checkpoint.
+    if best_state is None:
+        raise RuntimeError('Training completed without producing a checkpoint')
+    model.load_state_dict(best_state)
+    test_loss, test_acc, test_uar, test_f1 = evaluate(
+        model, test_loader, criterion, device, num_classes
+    )
+
     logging.info("=" * 80)
     logging.info("Training completed!")
-    logging.info(f"Best Test Accuracy: {best_test_acc:.2f}%")
-    logging.info(f"Final Test Accuracy: {test_acc:.2f}%")
-    logging.info(f"Final Test UAR: {test_uar:.2f}%")
-    logging.info(f"Final Test F1: {test_f1:.2f}%")
+    logging.info(f"Best Validation Accuracy: {best_val_acc:.2f}%")
+    logging.info(f"Test Accuracy: {test_acc:.2f}%")
+    logging.info(f"Test UAR: {test_uar:.2f}%")
+    logging.info(f"Test F1: {test_f1:.2f}%")
 
     # Save results
     output_dir = Path(args.output_dir)
@@ -361,10 +391,12 @@ def main():
 
     results = {
         'args': vars(args),
-        'best_test_acc': best_test_acc,
-        'final_test_acc': test_acc,
-        'final_test_uar': test_uar,
-        'final_test_f1': test_f1,
+        'selection_metric': 'validation_accuracy',
+        'best_val_acc': best_val_acc,
+        'test_loss': test_loss,
+        'test_acc': test_acc,
+        'test_uar': test_uar,
+        'test_f1': test_f1,
         'history': history
     }
 

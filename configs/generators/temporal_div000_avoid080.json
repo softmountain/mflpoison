@@ -1,0 +1,15 @@
+{
+  "generator": {
+    "family": "kplus1",
+    "variant": "temporal_adaptive"
+  },
+  "loss": {
+    "lambda_div": 0.0,
+    "lambda_avoid": 0.8
+  },
+  "schedule": {
+    "diversity_start_epoch": 3
+  },
+  "seed": 42,
+  "dataset": "ucf101"
+}

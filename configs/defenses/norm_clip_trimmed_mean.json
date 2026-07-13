@@ -1,0 +1,12 @@
+{
+  "update_filters": [
+    {
+      "name": "norm_clipping",
+      "max_norm": 10.0
+    }
+  ],
+  "aggregator": {
+    "name": "trimmed_mean",
+    "trim_ratio": 0.2
+  }
+}

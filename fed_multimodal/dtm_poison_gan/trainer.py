@@ -166,11 +166,25 @@ class DTMGANTrainer:
             self.opt_d.zero_grad(set_to_none=True)
             return metrics
         loss.backward()
-        if self.config.grad_clip and self.config.grad_clip > 0:
-            torch.nn.utils.clip_grad_norm_(
-                self.discriminator.parameters(), self.config.grad_clip
+        bad_gradients = [
+            name
+            for name, parameter in self.discriminator.named_parameters()
+            if parameter.grad is not None
+            and not torch.isfinite(parameter.grad).all()
+        ]
+        if bad_gradients:
+            print(
+                "[D-grad-skip] non-finite grad in "
+                f"{len(bad_gradients)} params; first: {bad_gradients[:5]}",
+                flush=True,
             )
-        self.opt_d.step()
+            self.opt_d.zero_grad(set_to_none=True)
+        else:
+            if self.config.grad_clip and self.config.grad_clip > 0:
+                torch.nn.utils.clip_grad_norm_(
+                    self.discriminator.parameters(), self.config.grad_clip
+                )
+            self.opt_d.step()
         self.bank.update(real_embeddings, real_labels)
         return metrics
 

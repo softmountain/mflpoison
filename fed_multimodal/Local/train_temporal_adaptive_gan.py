@@ -41,6 +41,10 @@ def parse_args():
     parser.add_argument("--lambda_d_fake", type=float, default=None)
     parser.add_argument("--lambda_avoid", type=float, default=None)
     parser.add_argument("--lambda_div", type=float, default=None)
+    parser.add_argument("--diversity_start_epoch", type=int, default=None)
+    parser.add_argument("--diversity_warmup_epochs", type=int, default=None)
+    parser.add_argument("--r1_gamma", type=float, default=None)
+    parser.add_argument("--r1_interval", type=int, default=None)
     parser.add_argument("--target_strategy", type=str, default="same_as_real", choices=["same_as_real", "balanced", "fixed", "mixed"])
     parser.add_argument("--fixed_target", type=int, default=-1)
     parser.add_argument("--freeze_d", type=str, default="none", choices=["none", "backbone", "head_only"])
@@ -86,6 +90,18 @@ def main():
         config.lambda_avoid = args.lambda_avoid
     if args.lambda_div is not None:
         config.lambda_div = args.lambda_div
+    if args.diversity_start_epoch is not None:
+        config.diversity_start_epoch = args.diversity_start_epoch
+    if args.diversity_warmup_epochs is not None:
+        if args.diversity_warmup_epochs < 1:
+            raise ValueError("--diversity_warmup_epochs must be at least 1")
+        config.diversity_warmup_epochs = args.diversity_warmup_epochs
+    if args.r1_gamma is not None:
+        config.r1_gamma = args.r1_gamma
+    if args.r1_interval is not None:
+        if args.r1_interval < 1:
+            raise ValueError("--r1_interval must be at least 1")
+        config.r1_interval = args.r1_interval
 
     discriminator_model, teacher_checkpoint = build_kplus1_discriminator(
         model_path=args.model_path,

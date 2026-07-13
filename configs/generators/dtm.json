@@ -1,0 +1,12 @@
+{
+  "generator": {
+    "family": "kplus1",
+    "variant": "dtm"
+  },
+  "loss": {
+    "lambda_distribution": 1.0,
+    "lambda_diversity": 0.2
+  },
+  "seed": 42,
+  "dataset": "ucf101"
+}

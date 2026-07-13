@@ -10,9 +10,15 @@ def classification_metrics(logits, y_target, num_classes, fake_class):
     probs = F.softmax(logits, dim=1)
     pred_original = logits[:, :num_classes].argmax(dim=1)
     pred_all = logits.argmax(dim=1)
+    target_among_real = (pred_original == y_target).float().mean()
+    discriminator_escape = (pred_all != int(fake_class)).float().mean()
+    joint_target_escape = (pred_all == y_target).float().mean()
     return {
-        "target_success_rate": float((pred_original == y_target).float().mean().cpu()),
-        "fake_escape_rate": float((pred_all != int(fake_class)).float().mean().cpu()),
+        "target_success_rate": float(target_among_real.cpu()),
+        "fake_escape_rate": float(discriminator_escape.cpu()),
+        "target_among_real_rate": float(target_among_real.cpu()),
+        "discriminator_escape_rate": float(discriminator_escape.cpu()),
+        "joint_target_escape_rate": float(joint_target_escape.cpu()),
         "fake_class_prob": float(probs[:, int(fake_class)].mean().cpu()),
         "target_prob": float(probs.gather(1, y_target.view(-1, 1)).mean().cpu()),
     }
