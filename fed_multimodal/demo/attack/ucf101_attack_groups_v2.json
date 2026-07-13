@@ -1,0 +1,151 @@
+{
+  "version": "v2_fine_grained_action_similarity",
+  "dataset": "ucf101_demo",
+  "description": "Fine-grained action-similarity groups for UCF101 demo poisoning evaluation.",
+  "groups": {
+    "face_makeup_closeup": {
+      "display_name_zh": "面部化妆近景",
+      "display_name_en": "Face makeup close-up",
+      "attack_enabled": true,
+      "reason_zh": "均为面部近景化妆动作，主要视觉差异集中在眼部和唇部局部区域，背景、人物姿态和手部位置高度相似。",
+      "reason_en": "Both actions are close-up facial makeup activities with similar pose, background, and hand positions; discriminative cues are localized around eyes or lips.",
+      "labels": ["ApplyEyeMakeup", "ApplyLipstick"]
+    },
+    "face_hair_grooming": {
+      "display_name_zh": "头脸部护理",
+      "display_name_en": "Face and hair grooming",
+      "attack_enabled": true,
+      "reason_zh": "这些动作都发生在头部或脸部附近，主体多为室内上半身视角，手或工具围绕头脸区域移动。",
+      "reason_en": "These actions occur around the head or face, usually in indoor upper-body views, with hands or tools moving near the same body region.",
+      "labels": ["BlowDryHair", "BrushingTeeth", "Haircut", "HeadMassage", "ShavingBeard"]
+    },
+    "inverted_body_support": {
+      "display_name_zh": "身体支撑与倒立动作",
+      "display_name_en": "Body support and inverted motion",
+      "attack_enabled": true,
+      "reason_zh": "这些类别都以手臂或身体支撑为核心，人体姿态和受力结构相似，容易在局部姿态变化上混淆。",
+      "reason_en": "These classes are dominated by body or arm support, with similar pose structure and confusion-prone local motion differences.",
+      "labels": ["HandstandPushups", "HandstandWalking", "WallPushups"]
+    },
+    "gymnastics_apparatus": {
+      "display_name_zh": "器械体操",
+      "display_name_en": "Gymnastics apparatus",
+      "attack_enabled": true,
+      "reason_zh": "均为体操或器械相关动作，人物与器械交互明显，场地背景和大幅身体姿态变化相似。",
+      "reason_en": "All are gymnastics or apparatus-related actions with salient human-apparatus interaction, similar venue backgrounds, and large body-pose changes.",
+      "labels": ["BalanceBeam", "FloorGymnastics", "ParallelBars", "StillRings", "UnevenBars"]
+    },
+    "cricket_actions": {
+      "display_name_zh": "板球动作",
+      "display_name_en": "Cricket actions",
+      "attack_enabled": true,
+      "reason_zh": "两类都发生在板球场景中，装备、背景和挥臂/击球运动模式相近。",
+      "reason_en": "Both classes share cricket scenes, equipment, backgrounds, and arm-swing or striking motion cues.",
+      "labels": ["CricketBowling", "CricketShot"]
+    },
+    "ball_goal_actions": {
+      "display_name_zh": "球类得分动作",
+      "display_name_en": "Ball scoring actions",
+      "attack_enabled": true,
+      "reason_zh": "这些动作都以运动场中的目标导向得分为核心，包含快速接近目标、发力和完成击打/射门/扣篮的视觉过程。",
+      "reason_en": "These are goal-oriented scoring actions in sports venues, sharing approach, force transfer, and final strike or shot cues.",
+      "labels": ["BasketballDunk", "FieldHockeyPenalty", "SoccerPenalty"]
+    },
+    "object_release_sports": {
+      "display_name_zh": "物体释放与击打运动",
+      "display_name_en": "Object release and strike sports",
+      "attack_enabled": true,
+      "reason_zh": "这些类别都由手臂驱动物体轨迹，关键视觉信号来自释放、接取或击打瞬间。",
+      "reason_en": "These actions are driven by arm-controlled object trajectories, with key visual cues around release, catch, or strike moments.",
+      "labels": ["Bowling", "FrisbeeCatch", "TableTennisShot"]
+    },
+    "boxing_practice": {
+      "display_name_zh": "拳击训练",
+      "display_name_en": "Boxing practice",
+      "attack_enabled": true,
+      "reason_zh": "两类都包含连续出拳和训练器械，人物站姿、上肢运动和室内训练背景高度相似。",
+      "reason_en": "Both include repeated punching against training equipment, with similar stance, upper-body motion, and indoor practice backgrounds.",
+      "labels": ["BoxingPunchingBag", "BoxingSpeedBag"]
+    },
+    "combat_body_motion": {
+      "display_name_zh": "对抗与身体运动",
+      "display_name_en": "Combat and body motion",
+      "attack_enabled": true,
+      "reason_zh": "这些动作以人体整体姿态和重心变化为主要视觉线索，背景信息相对次要。",
+      "reason_en": "These actions rely heavily on full-body pose and center-of-mass changes, while background cues are less decisive.",
+      "labels": ["BabyCrawling", "BodyWeightSquats", "SumoWrestling"]
+    },
+    "athletic_throwing": {
+      "display_name_zh": "田径投掷与发射",
+      "display_name_en": "Athletic throwing and launching",
+      "attack_enabled": true,
+      "reason_zh": "这些类别都包含瞄准、助跑或全身发力后的释放/发射动作，视觉上共享明显的上肢和躯干发力模式。",
+      "reason_en": "These classes share aiming, approach, or whole-body force transfer before release or launch, with strong upper-body and torso motion cues.",
+      "labels": ["Archery", "HammerThrow", "LongJump", "Shotput"]
+    },
+    "string_instruments": {
+      "display_name_zh": "弦乐演奏",
+      "display_name_en": "String instrument performance",
+      "attack_enabled": true,
+      "reason_zh": "两类都为弦乐器演奏，坐姿、持琴姿态和手部演奏区域相似，差异主要来自乐器形状和细节。",
+      "reason_en": "Both are string instrument performances with similar seated pose, instrument-holding posture, and hand interaction regions; differences mostly come from instrument details.",
+      "labels": ["PlayingCello", "PlayingSitar"]
+    },
+    "percussion_wind_instruments": {
+      "display_name_zh": "打击与吹奏乐器",
+      "display_name_en": "Percussion and wind instruments",
+      "attack_enabled": true,
+      "reason_zh": "这些类别都属于乐器演奏，主体通常较稳定，分类依赖手部或口部与乐器的细粒度交互。",
+      "reason_en": "These instrument-performance classes usually have stable body pose and depend on fine-grained hand or mouth interaction with the instrument.",
+      "labels": ["PlayingDaf", "PlayingDhol", "PlayingFlute"]
+    },
+    "indoor_hand_object_tasks": {
+      "display_name_zh": "室内手部物体操作",
+      "display_name_en": "Indoor hand-object tasks",
+      "attack_enabled": true,
+      "reason_zh": "这些类别都是室内细粒度手部操作，主体大幅运动较少，关键区别来自局部物体和手部轨迹。",
+      "reason_en": "These are fine-grained indoor hand-object tasks with limited body motion; distinctions mainly come from local objects and hand trajectories.",
+      "labels": ["CuttingInKitchen", "Knitting", "Typing", "WritingOnBoard"]
+    },
+    "tool_cleaning_tasks": {
+      "display_name_zh": "工具与清洁动作",
+      "display_name_en": "Tool and cleaning tasks",
+      "attack_enabled": true,
+      "reason_zh": "两类都由工具驱动重复手臂动作，视觉信号集中在工具、手臂和局部环境交互上。",
+      "reason_en": "Both are tool-driven repetitive arm actions, with visual cues concentrated on the tool, arm motion, and local environment interaction.",
+      "labels": ["Hammering", "MoppingFloor"]
+    },
+    "water_motion": {
+      "display_name_zh": "水体相关运动",
+      "display_name_en": "Water-related motion",
+      "attack_enabled": true,
+      "reason_zh": "这些动作都具有明显水体背景或入水/水上运动过程，环境纹理和人体运动幅度相似。",
+      "reason_en": "These actions share water backgrounds or water-entry/water-sport dynamics, with similar environment texture and large body motion.",
+      "labels": ["CliffDiving", "FrontCrawl", "Rafting", "Surfing"]
+    },
+    "air_ice_motion": {
+      "display_name_zh": "空中与冰面运动",
+      "display_name_en": "Air and ice motion",
+      "attack_enabled": true,
+      "reason_zh": "两类都依赖大幅身体姿态变化和强环境背景，虽然场景不同，但视觉识别都强调身体轨迹和姿态。",
+      "reason_en": "Both rely on large body-pose changes and distinctive environment context; despite scene differences, recognition emphasizes body trajectory and pose.",
+      "labels": ["IceDancing", "SkyDiving"]
+    },
+    "group_performance": {
+      "display_name_zh": "群体表演",
+      "display_name_en": "Group performance",
+      "attack_enabled": false,
+      "reason_zh": "该类主要由群体队列表演构成，当前 demo 中缺少足够相似的同组非自身类别，因此仅用于报告和常规评估。",
+      "reason_en": "This class is dominated by group formation performance and has no sufficiently similar non-self class in the demo label space, so it is only used for reporting and clean evaluation.",
+      "labels": ["BandMarching"]
+    },
+    "small_object_event": {
+      "display_name_zh": "小物体事件",
+      "display_name_en": "Small object event",
+      "attack_enabled": false,
+      "reason_zh": "该类以蜡烛和吹气事件为核心，当前 demo 中缺少足够相似的同组非自身类别，因此不参与组内中毒。",
+      "reason_en": "This class centers on candle and blowing events and lacks a sufficiently similar non-self class in the demo label space, so it is excluded from intra-group poisoning.",
+      "labels": ["BlowingCandles"]
+    }
+  }
+}

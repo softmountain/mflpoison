@@ -1,0 +1,55 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+.installed.cfg
+*.egg
+
+# ===== 虚拟环境 =====
+venv/
+.venv/
+env/
+ENV/
+
+# ===== 训练产物 / 大文件（不上传） =====
+# GAN checkpoint / 模型权重
+*.pt
+*.pth
+*.ckpt
+# 特征文件
+*.pkl
+*.npy
+*.npz
+# 结果目录内容（保留目录结构，不传具体产物）
+results/
+fed_multimodal/results/
+fed_multimodal/Local/results/
+output/
+# 数据集
+datasets/
+data/*.zip
+*.tar.gz
+
+# ===== 日志 / 临时 =====
+*.log
+run_logs.log
+debug/
+.ipynb_checkpoints/
+tmp/
+*.tmp
+
+# ===== 图片等大体积资源（可选，按需） =====
+# img/
+
+# ===== 编辑器 / 系统 =====
+.vscode/
+.idea/
+.DS_Store
+*.swp
+*.swo
