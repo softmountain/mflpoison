@@ -37,6 +37,18 @@ def set_seed(seed):
     random.seed(seed)
 
 
+def fold_checkpoint_path(path_value, fold_idx, num_folds):
+    """Return a fold-safe checkpoint path for the legacy entry point."""
+    path = Path(path_value)
+    if "{fold}" in str(path):
+        return Path(str(path).format(fold=fold_idx))
+    if int(num_folds) <= 1:
+        return path
+    suffix = path.suffix or ".pt"
+    stem = path.name[:-len(path.suffix)] if path.suffix else path.name
+    return path.with_name(f"{stem}_fold{fold_idx}{suffix}")
+
+
 def parse_args():
     # read path config files
     path_conf = dict()
@@ -235,7 +247,7 @@ def parse_args():
         '--label_nosiy_level', 
         type=float, 
         default=0.1,
-        help='nosiy level for labels; 0.9 means 90% wrong'
+        help='nosiy level for labels; 0.9 means 90%% wrong'
     )
 
     parser.add_argument(
@@ -246,6 +258,17 @@ def parse_args():
     )
     
     parser.add_argument("--dataset", default="ucf101")
+    parser.add_argument(
+        "--num_folds",
+        type=int,
+        default=3,
+        help="number of UCF101 folds to run",
+    )
+    parser.add_argument(
+        "--save_m_star_path",
+        default=None,
+        help="optional converged global checkpoint path; use {fold} for folds",
+    )
     args = parser.parse_args()
     return args
 
@@ -274,7 +297,7 @@ if __name__ == '__main__':
         Client = ClientFedRS
 
     # We perform 3 fold experiments
-    for fold_idx in range(1, 4):
+    for fold_idx in range(1, int(args.num_folds) + 1):
         # load simulation feature
         dm.load_sim_dict(
             fold_idx=fold_idx
@@ -306,7 +329,7 @@ if __name__ == '__main__':
                 video_dict,
                 client_sim_dict=client_sim_dict,
                 default_feat_shape_a=np.array([500, constants.feature_len_dict["mfcc"]]),
-                default_feat_shape_b=np.array([10, constants.feature_len_dict["mobilenet_v2"]]),
+                default_feat_shape_b=np.array([9, constants.feature_len_dict["mobilenet_v2"]]),
                 shuffle=shuffle
             )
         
@@ -361,6 +384,12 @@ if __name__ == '__main__':
         
         # set seeds again
         set_seed(8)
+
+        # M* is selected exclusively by the development split. The holdout
+        # test split remains reporting-only and never controls checkpointing.
+        best_dev_acc = None
+        best_dev_epoch = None
+        best_dev_state = None
 
         # Training steps
         for epoch in range(int(args.num_epochs)):
@@ -431,6 +460,27 @@ if __name__ == '__main__':
                     data_split='dev', 
                     metric='acc'
                 )
+                current_dev_acc = float(server.result.get('acc', 0.0))
+                if best_dev_acc is None or current_dev_acc > best_dev_acc:
+                    best_dev_acc = current_dev_acc
+                    best_dev_epoch = epoch
+                    best_dev_state = copy.deepcopy(server.global_model.state_dict())
+                    if args.save_m_star_path:
+                        checkpoint_path = fold_checkpoint_path(
+                            args.save_m_star_path, fold_idx, args.num_folds
+                        )
+                        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+                        torch.save(
+                            {
+                                'model_state_dict': best_dev_state,
+                                'args': vars(args),
+                                'fold': fold_idx,
+                                'selection_split': 'dev',
+                                'best_dev_acc': best_dev_acc,
+                                'best_epoch': best_dev_epoch,
+                            },
+                            checkpoint_path,
+                        )
                 # 4. Perform the test on holdout set
                 server.inference(dataloader_dict['test'])
                 server.result_dict[epoch]['test'] = server.result
@@ -445,6 +495,25 @@ if __name__ == '__main__':
 
         # Performance save code
         save_result_dict[f'fold{fold_idx}'] = server.summarize_dict_results()
+        if args.save_m_star_path:
+            checkpoint_path = fold_checkpoint_path(
+                args.save_m_star_path, fold_idx, args.num_folds
+            )
+            checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+            torch.save(
+                {
+                    'model_state_dict': best_dev_state or copy.deepcopy(
+                        server.global_model.state_dict()
+                    ),
+                    'args': vars(args),
+                    'fold': fold_idx,
+                    'selection_split': 'dev',
+                    'best_dev_acc': best_dev_acc,
+                    'best_epoch': best_dev_epoch,
+                    'final_test_metrics': save_result_dict[f'fold{fold_idx}'],
+                },
+                checkpoint_path,
+            )
         
         # output to results
         server.save_json_file(
@@ -466,6 +535,3 @@ if __name__ == '__main__':
         save_result_dict, 
         save_json_path.joinpath('result.json')
     )
-
-
-

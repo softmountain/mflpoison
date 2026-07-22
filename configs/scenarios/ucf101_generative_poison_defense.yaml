@@ -1,0 +1,112 @@
+dataset:
+  name: ucf101
+  root: /path/to/fedmm/feature-root
+  split: "1"
+  fold: 1
+  alpha: 1.0
+  num_clients: null
+  partition_path: null
+  partition_id: fold1-alpha1
+  partition_hash: null
+  num_classes: 51
+  modality_shapes:
+    audio: [500, 80]
+    video: [9, 1280]
+  label_mapping: {}
+  options: {}
+
+model:
+  name: MMActionClassifier
+  constructor: fed_multimodal.model.mm_models:MMActionClassifier
+  checkpoint_path: null
+  kwargs:
+    hid_size: 64
+    attention: false
+    attention_name: base
+  options: {}
+
+federation:
+  rounds: 50
+  pretrain_rounds: 50
+  attack_rounds: 20
+  clients_per_round: 5
+  local_epochs: 1
+  batch_size: 16
+  learning_rate: 0.05
+  seed: 42
+  convergence_metric: acc
+  convergence_mode: max
+  patience: 10
+  min_delta: 0.0
+  resume_from: null
+  options:
+    device: cuda
+    mu: 0.0
+
+generator:
+  enabled: true
+  family: kplus1
+  variant: dtm
+  lifecycle: offline_once
+  refresh_interval: 5
+  epochs: 5
+  batch_size: 16
+  learning_rate: 0.0002
+  seed: 42
+  checkpoint_dir: null
+  loss:
+    lambda_distribution: 1.0
+    lambda_diversity: 0.2
+  options:
+    max_batches: null
+    log_interval: 20
+
+attack:
+  enabled: true
+  strategy: generative_feature_poisoning
+  malicious_clients: []
+  malicious_client_count: 1
+  poison_ratio: 0.2
+  poison_count: null
+  injection_mode: replace
+  condition_class: 0
+  assigned_train_label: 1
+  victim_eval_class: 1
+  goal_prediction_class: 0
+  start_round: 0
+  end_round: null
+  every: 1
+  options:
+    generation_batch_size: 64
+
+defense:
+  enabled: true
+  detectors:
+    - name: norm_mad
+      threshold: 3.5
+    - name: cosine_mad
+      threshold: 3.5
+  sanitizer:
+    name: norm_clipping
+    max_norm: null
+    mad_multiplier: 3.5
+  aggregator:
+    name: weighted_mean
+  policy: reject_if_both_clip_if_one
+  ewma_decay: null
+  options: {}
+
+evaluation:
+  metrics: [accuracy, uar, f1, attack_success_rate]
+  evaluate_test: true
+  evaluate_attack: true
+  options: {}
+
+artifacts:
+  root_dir: artifacts/ucf101_generative_poison_defense
+  save_every_round: true
+  manifest_name: manifest.json
+  snapshot_name: global_snapshot.pt
+  generator_dir: generators
+  round_records_name: round_records.pt
+  options: {}

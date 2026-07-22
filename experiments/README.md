@@ -1,17 +1,28 @@
-# Unified experiment entry points
+# Unified UCF101 scenario entry point
 
-These commands are the compatibility layer for the gradual MFL-Poison
-refactor.  Existing scripts under `fed_multimodal/Local` remain supported, but
-new automation should call these entry points so generator variants can be
-swapped without changing attack code.
+The production poisoning flow has one entry point. It trains the clean global
+model, selects M* on the development split, trains one generator per malicious
+client partition, executes clean/attack/defended branches with the same client
+schedule, and writes lineage and round audit records.
 
 ```bash
-python experiments/train_generator.py --generator dtm -- --epochs 50
+python -m mflpoison.runner \
+  --config configs/scenarios/ucf101_generative_poison_defense.yaml
 
-# The variant and loss/schedule flags can also come from one versioned config.
-python experiments/train_generator.py \
-  --config configs/generators/temporal_div005_avoid050_start10.json -- --epochs 50
+python experiments/run_scenario.py \
+  --config configs/scenarios/ucf101_generative_poison_defense.yaml \
+  --artifact-root artifacts/my-run
+```
 
+`experiments/train_generator.py`, `train_dtm_poison_gan.py`, and
+`train_temporal_adaptive_gan.py` are temporary aliases for the same runner.
+They require the complete eight-section scenario config; they no longer load a
+centralized `full_train` dataset.
+
+Generator checkpoints remain usable through the legacy-compatible inference
+and evaluation entry points:
+
+```bash
 python experiments/evaluate_generator.py \
   --generator dtm --checkpoint path/to/checkpoint.pt -- --num_batches 20
 
@@ -23,10 +34,6 @@ python experiments/generate_synthetic.py \
 python experiments/evaluate_tstr.py \
   --synthetic_data outputs/dtm/synthetic.pt --num_epochs 100
 ```
-
-Arguments after `--` are forwarded to the compatible legacy trainer or
-evaluator where applicable.
-Explicit forwarded arguments override values loaded from the config file.
 
 Synthetic artifacts use the canonical SyntheticBatch schema by default. The
 TSTR entry point reads both canonical and legacy artifacts, selects the victim

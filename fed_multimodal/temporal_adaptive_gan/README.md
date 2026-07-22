@@ -1,8 +1,8 @@
 # Temporal Adaptive Poison GAN
 
-`temporal_adaptive_gan` is an independent K+1 poison-GAN variant. It is
-kept separate from `poison_gan` so its model, losses, trainer, and checkpoints
-can evolve without changing the legacy implementation.
+`temporal_adaptive_gan` is a K+1 generator objective used by the unified
+scenario runner. Its model, losses, trainer, and checkpoint format remain
+separate from the legacy implementation.
 
 ## Design
 
@@ -18,10 +18,12 @@ can evolve without changing the legacy implementation.
 
 ## Entry points
 
-Use the dedicated scripts; the legacy poison-GAN launchers remain unchanged.
+Set `generator.variant: temporal_adaptive` in a complete scenario config, then
+run the production entry point. The old training filename is a temporary alias
+for this same command.
 
 ```bash
-python fed_multimodal/Local/train_temporal_adaptive_gan.py --epochs 50
+python -m mflpoison.runner --config path/to/temporal-scenario.yaml
 
 python fed_multimodal/Local/eval_temporal_adaptive_gan.py --checkpoint path/to/checkpoint.pt
 

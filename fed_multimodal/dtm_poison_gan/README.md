@@ -1,8 +1,8 @@
 # DTM-GAN
 
-`dtm_poison_gan` is an independent Distributional Temporal Matching GAN
-variant. It deliberately lives beside `poison_gan` so checkpoints, entry
-points, and future experiments cannot be confused with the legacy K+1 GAN.
+`dtm_poison_gan` is the legacy-compatible implementation used by the unified
+scenario runner for the Distributional Temporal Matching objective. Its
+checkpoint format remains separate from the temporal-adaptive variant.
 
 ## Combined design
 
@@ -25,18 +25,16 @@ points, and future experiments cannot be confused with the legacy K+1 GAN.
 bash fed_multimodal/Local/run_dtm_poison_gan_cloud.sh
 ```
 
-Training does not run validation by default. To evaluate a small validation
-slice during training, pass `--eval_batches N`.
-
-For federated missing-class training, pass a server-exported embedding bank:
+The script reads the complete scenario YAML from `SCENARIO_CONFIG` and defaults
+to `configs/scenarios/ucf101_generative_poison_defense.yaml`. Generator
+training is performed once per malicious client partition after M* selection;
+there is no centralized `full_train` input. Override artifact output without
+editing the config as follows:
 
 ```bash
-python fed_multimodal/Local/train_dtm_poison_gan.py \
-  --prototype_path path/to/prototypes.pt
+ARTIFACT_ROOT=artifacts/dtm-run \
+  bash fed_multimodal/Local/run_dtm_poison_gan_cloud.sh
 ```
-
-Every run exports `prototypes_<exp_name>.pt`, which can be aggregated or sent
-to another client.
 
 ## Evaluate or generate
 

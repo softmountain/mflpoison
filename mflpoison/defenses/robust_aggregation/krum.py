@@ -2,9 +2,8 @@ from typing import Mapping, Sequence
 
 import torch
 
-from mflpoison.core.types import ClientUpdate
-
-from .common import validate_updates
+from ..common import flatten_delta, global_model_state, update_delta
+from .common import next_model_value, validate_updates
 
 
 class Krum:
@@ -21,25 +20,13 @@ class Krum:
             raise ValueError("byzantine_clients must be non-negative")
         self.byzantine_clients = int(byzantine_clients)
 
-    def _flatten_delta(self, update, global_state, keys):
-        pieces = []
-        for key in keys:
-            value = update.state[key]
-            if value.is_floating_point() or value.is_complex():
-                delta = value - global_state[key].to(value.device)
-                if delta.is_complex():
-                    delta = torch.view_as_real(delta)
-                pieces.append(delta.reshape(-1).to(dtype=torch.float64, device="cpu"))
-        if not pieces:
-            raise ValueError("Krum requires at least one floating-point parameter")
-        return torch.cat(pieces)
-
     def aggregate(
         self,
-        updates: Sequence[ClientUpdate],
+        updates: Sequence,
         global_state: Mapping[str, torch.Tensor],
     ):
-        keys = validate_updates(updates)
+        base = global_model_state(global_state)
+        keys = validate_updates(updates, base)
         count = len(updates)
         f = self.byzantine_clients
         if count < 2 * f + 3:
@@ -48,7 +35,7 @@ class Krum:
             )
 
         vectors = torch.stack(
-            [self._flatten_delta(update, global_state, keys) for update in updates]
+            [flatten_delta(update, base) for update in updates]
         )
         distances = torch.cdist(vectors, vectors, p=2).square()
         neighbor_count = count - f - 2
@@ -60,12 +47,8 @@ class Krum:
             scores.append(torch.topk(without_self, neighbor_count, largest=False).values.sum())
         selected = updates[int(torch.argmin(torch.stack(scores)).item())]
 
+        selected_delta = update_delta(selected, base)
         return {
-            key: (
-                selected.state[key].clone()
-                if selected.state[key].is_floating_point()
-                or selected.state[key].is_complex()
-                else global_state[key].clone()
-            )
+            key: next_model_value(selected_delta[key], base, key)
             for key in keys
         }

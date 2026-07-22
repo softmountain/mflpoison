@@ -31,6 +31,7 @@ results/
 fed_multimodal/results/
 fed_multimodal/Local/results/
 output/
+/artifacts/
 # 数据集
 datasets/
 data/*.zip

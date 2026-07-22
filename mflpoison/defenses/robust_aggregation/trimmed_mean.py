@@ -2,9 +2,8 @@ from typing import Mapping, Sequence
 
 import torch
 
-from mflpoison.core.types import ClientUpdate
-
-from .common import preserve_nonfloating, validate_updates
+from ..common import global_model_state, update_delta
+from .common import next_model_value, validate_updates
 
 
 class TrimmedMean:
@@ -17,21 +16,30 @@ class TrimmedMean:
 
     def aggregate(
         self,
-        updates: Sequence[ClientUpdate],
+        updates: Sequence,
         global_state: Mapping[str, torch.Tensor],
     ):
-        keys = validate_updates(updates)
+        base = global_model_state(global_state)
+        keys = validate_updates(updates, base)
         trim = int(len(updates) * self.trim_ratio)
         if 2 * trim >= len(updates):
             raise ValueError("trim ratio removes every client update")
         result = {}
         for key in keys:
-            values = [update.state[key] for update in updates]
-            preserved = preserve_nonfloating(values, global_state, key)
-            if preserved is not None:
-                result[key] = preserved
+            if not (base[key].is_floating_point() or base[key].is_complex()):
+                result[key] = base[key].clone()
                 continue
-            stacked = torch.stack(values, dim=0).sort(dim=0).values
-            selected = stacked[trim : len(updates) - trim] if trim else stacked
-            result[key] = selected.mean(dim=0)
+            values = [update_delta(update, base)[key].to(base[key].device) for update in updates]
+            stacked = torch.stack(values, dim=0)
+            if stacked.is_complex():
+                real = stacked.real.sort(dim=0).values
+                imag = stacked.imag.sort(dim=0).values
+                selected_real = real[trim : len(updates) - trim] if trim else real
+                selected_imag = imag[trim : len(updates) - trim] if trim else imag
+                aggregate_delta = torch.complex(selected_real.mean(dim=0), selected_imag.mean(dim=0))
+            else:
+                sorted_values = stacked.sort(dim=0).values
+                selected = sorted_values[trim : len(updates) - trim] if trim else sorted_values
+                aggregate_delta = selected.mean(dim=0)
+            result[key] = next_model_value(aggregate_delta, base, key)
         return result

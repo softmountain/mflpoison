@@ -13,14 +13,6 @@ if str(ROOT) not in sys.path:
 from mflpoison.core.config import load_config
 
 
-TRAIN_SCRIPTS = {
-    "teacher_guided": "fed_multimodal/Local/train_local_gan.py",
-    "legacy": "fed_multimodal/Local/train_poison_gan.py",
-    "kplus1_legacy": "fed_multimodal/Local/train_poison_gan.py",
-    "temporal_adaptive": "fed_multimodal/Local/train_temporal_adaptive_gan.py",
-    "dtm": "fed_multimodal/Local/train_dtm_poison_gan.py",
-}
-
 EVAL_SCRIPTS = {
     "teacher_guided": "fed_multimodal/Local/eval_local_gan_quality.py",
     "legacy": "fed_multimodal/Local/eval_poison_gan.py",

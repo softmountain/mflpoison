@@ -291,6 +291,7 @@ class TemporalAdaptiveGANTrainer:
                 "optimizer_g_state_dict": self.opt_g.state_dict(),
                 "optimizer_d_state_dict": self.opt_d.state_dict(),
                 "embedding_bank": self.bank.state_dict(),
+                "d_updates": int(self._d_updates),
                 "metrics": metrics or {},
                 "extra": extra or {},
             },
@@ -308,4 +309,5 @@ class TemporalAdaptiveGANTrainer:
                 self.opt_d.load_state_dict(checkpoint["optimizer_d_state_dict"])
         if "embedding_bank" in checkpoint:
             self.bank.load_state_dict(checkpoint["embedding_bank"])
+        self._d_updates = int(checkpoint.get("d_updates", 0))
         return checkpoint

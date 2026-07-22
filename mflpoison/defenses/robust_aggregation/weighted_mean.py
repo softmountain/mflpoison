@@ -2,9 +2,8 @@ from typing import Mapping, Sequence
 
 import torch
 
-from mflpoison.core.types import ClientUpdate
-
-from .common import preserve_nonfloating, validate_updates
+from ..common import global_model_state, update_delta, update_weight
+from .common import next_model_value, validate_updates
 
 
 class WeightedMean:
@@ -12,20 +11,21 @@ class WeightedMean:
 
     def aggregate(
         self,
-        updates: Sequence[ClientUpdate],
+        updates: Sequence,
         global_state: Mapping[str, torch.Tensor],
     ):
-        keys = validate_updates(updates)
-        total = float(sum(update.num_samples for update in updates))
+        base = global_model_state(global_state)
+        keys = validate_updates(updates, base)
+        weights = [update_weight(update) for update in updates]
+        total = float(sum(weights))
         result = {}
         for key in keys:
-            values = [update.state[key] for update in updates]
-            preserved = preserve_nonfloating(values, global_state, key)
-            if preserved is not None:
-                result[key] = preserved
+            if not (base[key].is_floating_point() or base[key].is_complex()):
+                result[key] = base[key].clone()
                 continue
-            aggregated = torch.zeros_like(values[0])
-            for update, value in zip(updates, values):
-                aggregated.add_(value, alpha=float(update.num_samples) / total)
-            result[key] = aggregated
+            values = [update_delta(update, base)[key] for update in updates]
+            aggregated = torch.zeros_like(base[key])
+            for weight, value in zip(weights, values):
+                aggregated.add_(value.to(aggregated.device), alpha=weight / total)
+            result[key] = next_model_value(aggregated, base, key)
         return result

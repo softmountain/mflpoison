@@ -95,12 +95,16 @@ fed_multimodal/Local/results/local_training/best_model.pt           # K 类 teac
 ### Independent `temporal_adaptive` variant
 
 ```bash
-python fed_multimodal/Local/train_temporal_adaptive_gan.py --epochs 50
+python -m mflpoison.runner \
+  --config configs/scenarios/ucf101_generative_poison_defense.yaml
 python fed_multimodal/Local/eval_temporal_adaptive_gan.py --checkpoint path/to/checkpoint.pt
 python fed_multimodal/Local/generate_temporal_adaptive_features.py --checkpoint path/to/checkpoint.pt
 ```
 
-Its implementation and entry points are separate from `poison_gan`; see `fed_multimodal/temporal_adaptive_gan/README.md`.
+Set `generator.variant: temporal_adaptive` in the scenario config. The old
+training script is a temporary wrapper around the unified runner so generator
+training cannot bypass a malicious client's FedMM partition. Existing
+checkpoints remain supported by the evaluation and generation backends.
 
 ### 1. Smoke test
 
@@ -152,7 +156,7 @@ python fed_multimodal/Local/generate_poison_features.py \
   --output_path fed_multimodal/Local/results/poison_features/cloud_label_flip.pt
 ```
 
-### 5. 下游验证
+### 5. 下游验证（旧 checkpoint 兼容）
 
 ```bash
 python fed_multimodal/Local/train_with_poison_features.py \
@@ -163,7 +167,15 @@ python fed_multimodal/Local/train_with_poison_features.py \
   --output_dir fed_multimodal/Local/results/poison_classifier_eval/cloud
 ```
 
-一键流程：`bash fed_multimodal/Local/run_poison_pipeline.sh`
+以上命令仅用于已有 checkpoint 的独立评估。新的联邦中毒与服务器防御
+流程统一使用：
+
+```bash
+python -m mflpoison.runner \
+  --config configs/scenarios/ucf101_generative_poison_defense.yaml
+```
+
+兼容别名：`bash fed_multimodal/Local/run_poison_pipeline.sh`。
 
 ---
 

@@ -2,9 +2,8 @@ from typing import Mapping, Sequence
 
 import torch
 
-from mflpoison.core.types import ClientUpdate
-
-from .common import preserve_nonfloating, validate_updates
+from ..common import global_model_state, update_delta
+from .common import next_model_value, validate_updates
 
 
 class CoordinateMedian:
@@ -12,16 +11,24 @@ class CoordinateMedian:
 
     def aggregate(
         self,
-        updates: Sequence[ClientUpdate],
+        updates: Sequence,
         global_state: Mapping[str, torch.Tensor],
     ):
-        keys = validate_updates(updates)
+        base = global_model_state(global_state)
+        keys = validate_updates(updates, base)
         result = {}
         for key in keys:
-            values = [update.state[key] for update in updates]
-            preserved = preserve_nonfloating(values, global_state, key)
-            if preserved is not None:
-                result[key] = preserved
+            if not (base[key].is_floating_point() or base[key].is_complex()):
+                result[key] = base[key].clone()
                 continue
-            result[key] = torch.stack(values, dim=0).median(dim=0).values
+            values = [update_delta(update, base)[key].to(base[key].device) for update in updates]
+            stacked = torch.stack(values, dim=0)
+            if stacked.is_complex():
+                aggregate_delta = torch.complex(
+                    stacked.real.median(dim=0).values,
+                    stacked.imag.median(dim=0).values,
+                )
+            else:
+                aggregate_delta = stacked.median(dim=0).values
+            result[key] = next_model_value(aggregate_delta, base, key)
         return result

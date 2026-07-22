@@ -36,6 +36,15 @@ class KPlusOneBackend(BaseGeneratorBackend):
     def _build_generator(self, config):
         raise NotImplementedError
 
+    def _fork_devices(self):
+        if self.device.type != "cuda":
+            return []
+        return [
+            torch.cuda.current_device()
+            if self.device.index is None
+            else int(self.device.index)
+        ]
+
     @torch.no_grad()
     def generate(
         self,
@@ -77,22 +86,29 @@ class KPlusOneBackend(BaseGeneratorBackend):
         if seed is not None:
             rng.manual_seed(int(seed))
         audio_parts, video_parts = [], []
-        for start in range(0, count, batch_size):
-            end = min(count, start + batch_size)
-            labels = target_labels[start:end].to(self.device)
-            len_audio = audio_lengths[start:end].to(self.device)
-            len_video = video_lengths[start:end].to(self.device)
-            noise = torch.randn(
-                end - start,
-                int(self.config.z_dim),
-                device=self.device,
-                generator=rng,
-            )
-            audio, video = self.generator(
-                noise, labels, len_audio, len_video
-            )
-            audio_parts.append(audio.cpu())
-            video_parts.append(video.cpu())
+        with torch.random.fork_rng(
+            devices=self._fork_devices(), enabled=seed is not None
+        ):
+            if seed is not None:
+                torch.manual_seed(int(seed))
+                if self.device.type == "cuda":
+                    torch.cuda.manual_seed_all(int(seed))
+            for start in range(0, count, batch_size):
+                end = min(count, start + batch_size)
+                labels = target_labels[start:end].to(self.device)
+                len_audio = audio_lengths[start:end].to(self.device)
+                len_video = video_lengths[start:end].to(self.device)
+                noise = torch.randn(
+                    end - start,
+                    int(self.config.z_dim),
+                    device=self.device,
+                    generator=rng,
+                )
+                audio, video = self.generator(
+                    noise, labels, len_audio, len_video
+                )
+                audio_parts.append(audio.cpu())
+                video_parts.append(video.cpu())
 
         metadata = self.metadata()
         metadata["seed"] = seed
