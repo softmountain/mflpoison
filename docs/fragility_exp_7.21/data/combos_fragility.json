@@ -1,0 +1,185 @@
+{
+  "config": {
+    "recall_threshold": 70.0,
+    "source_recall_cap": 90.0,
+    "topk": 5,
+    "m_star_acc": 74.94855967078189
+  },
+  "sources": [
+    38,
+    8,
+    42,
+    21,
+    20
+  ],
+  "target_top5_fragile": [
+    49,
+    14,
+    35,
+    2,
+    23
+  ],
+  "target_bottom5_robust": [
+    38,
+    41,
+    8,
+    36,
+    37
+  ],
+  "combos_A": [
+    {
+      "source": 38,
+      "target": 49,
+      "cosine": -0.026204537406322982,
+      "source_name": "",
+      "target_name": "",
+      "role": "farthest",
+      "group": "A1",
+      "method": "A"
+    },
+    {
+      "source": 42,
+      "target": 14,
+      "cosine": -0.03374190537478621,
+      "source_name": "",
+      "target_name": "",
+      "role": "farthest",
+      "group": "A2",
+      "method": "A"
+    },
+    {
+      "source": 21,
+      "target": 35,
+      "cosine": -0.02114362972613531,
+      "source_name": "",
+      "target_name": "",
+      "role": "farthest",
+      "group": "A3",
+      "method": "A"
+    },
+    {
+      "source": 20,
+      "target": 2,
+      "cosine": 0.08688953556657603,
+      "source_name": "",
+      "target_name": "",
+      "role": "farthest",
+      "group": "A4",
+      "method": "A"
+    },
+    {
+      "source": 21,
+      "target": 23,
+      "cosine": 0.1583198809282551,
+      "source_name": "",
+      "target_name": "",
+      "role": "farthest",
+      "group": "A5",
+      "method": "A"
+    }
+  ],
+  "combos_B": [
+    {
+      "source": 42,
+      "target": 49,
+      "cosine": 0.18047167589345142,
+      "source_name": "",
+      "target_name": "",
+      "role": "nearest",
+      "group": "B1",
+      "method": "B"
+    },
+    {
+      "source": 38,
+      "target": 14,
+      "cosine": 0.45158250001923295,
+      "source_name": "",
+      "target_name": "",
+      "role": "nearest",
+      "group": "B2",
+      "method": "B"
+    },
+    {
+      "source": 38,
+      "target": 35,
+      "cosine": 0.43091444111733385,
+      "source_name": "",
+      "target_name": "",
+      "role": "nearest",
+      "group": "B3",
+      "method": "B"
+    },
+    {
+      "source": 38,
+      "target": 2,
+      "cosine": 0.39785719934005165,
+      "source_name": "",
+      "target_name": "",
+      "role": "nearest",
+      "group": "B4",
+      "method": "B"
+    },
+    {
+      "source": 42,
+      "target": 23,
+      "cosine": 0.5161671068536884,
+      "source_name": "",
+      "target_name": "",
+      "role": "nearest",
+      "group": "B5",
+      "method": "B"
+    }
+  ],
+  "combos_C": [
+    {
+      "source": 42,
+      "target": 38,
+      "cosine": 0.06817563074234313,
+      "source_name": "",
+      "target_name": "",
+      "role": "farthest",
+      "group": "C1",
+      "method": "C"
+    },
+    {
+      "source": 42,
+      "target": 41,
+      "cosine": 0.0568324470018726,
+      "source_name": "",
+      "target_name": "",
+      "role": "farthest",
+      "group": "C2",
+      "method": "C"
+    },
+    {
+      "source": 42,
+      "target": 8,
+      "cosine": -0.08075619389589729,
+      "source_name": "",
+      "target_name": "",
+      "role": "farthest",
+      "group": "C3",
+      "method": "C"
+    },
+    {
+      "source": 42,
+      "target": 36,
+      "cosine": 0.005154228058398438,
+      "source_name": "",
+      "target_name": "",
+      "role": "farthest",
+      "group": "C4",
+      "method": "C"
+    },
+    {
+      "source": 21,
+      "target": 37,
+      "cosine": 0.0032884023767401596,
+      "source_name": "",
+      "target_name": "",
+      "role": "farthest",
+      "group": "C5",
+      "method": "C"
+    }
+  ]
+}

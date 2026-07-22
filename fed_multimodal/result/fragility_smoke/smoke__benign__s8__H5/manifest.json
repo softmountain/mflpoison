@@ -1,0 +1,70 @@
+{
+  "spec": {
+    "run_id": "smoke__benign__s8__H5",
+    "phase": "smoke",
+    "condition": "benign",
+    "master_seed": 8,
+    "m_star_path": "/home/xp/fedpoi/fed_multimodal/Local/results/poison_attack/M_star_alpha5_sr1.pt",
+    "target_class": -1,
+    "source_class": 42,
+    "a_data": 1,
+    "schedule": "continuous",
+    "pulse_end": 15,
+    "horizon": 5,
+    "fold": 1,
+    "n0": 8,
+    "malicious_clients": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "eval_points": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "checkpoint_points": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "early_dense_eval_until": 0
+  },
+  "status": "completed",
+  "stop_reason": null,
+  "seeds": {
+    "master_seed": 8,
+    "partition_seed": 745289023,
+    "client_sampling_seed": 750278770,
+    "local_data_order_seed": 1694957546,
+    "model_training_seed": 103122400,
+    "poison_index_seed": 354350828,
+    "synthetic_sample_seed": 350404232
+  },
+  "provenance": {},
+  "poison_plan": null,
+  "per_client_exposure": {},
+  "per_client_train_length": {
+    "0": 397,
+    "1": 383,
+    "2": 396,
+    "3": 396,
+    "4": 403,
+    "5": 394,
+    "6": 395,
+    "7": 391,
+    "8": 363,
+    "9": 398
+  },
+  "ckpt_paths": {},
+  "log_path": null,
+  "started_at": 1784607256.7963543,
+  "finished_at": null
+}

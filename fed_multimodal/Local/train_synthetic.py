@@ -125,19 +125,24 @@ def compute_metrics(preds: torch.Tensor, labels: torch.Tensor, num_classes: int)
     # Accuracy
     acc = (preds == labels).mean() * 100
 
-    # UAR (Unweighted Average Recall)
+    # UAR (Unweighted Average Recall) + per-class recall
     recalls = []
+    per_class_recall = {}
     for c in range(num_classes):
         mask = labels == c
         if mask.sum() > 0:
-            recalls.append((preds[mask] == c).mean())
+            r = (preds[mask] == c).mean()
+            recalls.append(r)
+            per_class_recall[int(c)] = float(r * 100)
+        else:
+            per_class_recall[int(c)] = float('nan')
     uar = np.mean(recalls) * 100 if recalls else 0.0
 
     # F1 (macro)
     from sklearn.metrics import f1_score
     f1 = f1_score(labels, preds, average='macro', zero_division=0) * 100
 
-    return acc, uar, f1
+    return acc, uar, f1, per_class_recall
 
 
 def train_epoch(model, dataloader, criterion, optimizer, device, num_classes):
@@ -173,10 +178,10 @@ def train_epoch(model, dataloader, criterion, optimizer, device, num_classes):
 
     all_preds = torch.cat(all_preds)
     all_labels = torch.cat(all_labels)
-    acc, uar, f1 = compute_metrics(all_preds, all_labels, num_classes)
+    acc, uar, f1, per_class = compute_metrics(all_preds, all_labels, num_classes)
     avg_loss = total_loss / len(dataloader)
 
-    return avg_loss, acc, uar, f1
+    return avg_loss, acc, uar, f1, per_class
 
 
 @torch.no_grad()
@@ -208,10 +213,10 @@ def evaluate(model, dataloader, criterion, device, num_classes):
 
     all_preds = torch.cat(all_preds)
     all_labels = torch.cat(all_labels)
-    acc, uar, f1 = compute_metrics(all_preds, all_labels, num_classes)
+    acc, uar, f1, per_class = compute_metrics(all_preds, all_labels, num_classes)
     avg_loss = total_loss / len(dataloader)
 
-    return avg_loss, acc, uar, f1
+    return avg_loss, acc, uar, f1, per_class
 
 
 def main():
@@ -303,6 +308,7 @@ def main():
     logging.info(f"Starting training for {args.num_epochs} epochs")
 
     best_test_acc = 0.0
+    best_per_class_recall = {}
     history = {
         'train_loss': [],
         'train_acc': [],
@@ -314,12 +320,12 @@ def main():
 
     for epoch in range(1, args.num_epochs + 1):
         # Train
-        train_loss, train_acc, train_uar, train_f1 = train_epoch(
+        train_loss, train_acc, train_uar, train_f1, _ = train_epoch(
             model, synth_loader, criterion, optimizer, device, num_classes
         )
 
         # Evaluate on real test data
-        test_loss, test_acc, test_uar, test_f1 = evaluate(
+        test_loss, test_acc, test_uar, test_f1, test_per_class = evaluate(
             model, test_loader, criterion, device, num_classes
         )
 
@@ -346,6 +352,7 @@ def main():
         # Track best
         if test_acc > best_test_acc:
             best_test_acc = test_acc
+            best_per_class_recall = test_per_class
 
     # Final evaluation
     logging.info("=" * 80)
@@ -362,6 +369,7 @@ def main():
     results = {
         'args': vars(args),
         'best_test_acc': best_test_acc,
+        'best_per_class_recall': best_per_class_recall,
         'final_test_acc': test_acc,
         'final_test_uar': test_uar,
         'final_test_f1': test_f1,
@@ -375,7 +383,13 @@ def main():
     with open(results_file, 'w') as f:
         json.dump(results, f, indent=2)
 
+    # Save per-class recall as a standalone JSON for downstream source/target selection
+    per_class_file = output_dir / f'per_class_recall_{synth_name}.json'
+    with open(per_class_file, 'w') as f:
+        json.dump(best_per_class_recall, f, indent=2)
+
     logging.info(f"Results saved to {results_file}")
+    logging.info(f"Per-class recall saved to {per_class_file}")
 
 
 if __name__ == "__main__":

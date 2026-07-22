@@ -246,6 +246,21 @@ def parse_args():
     )
     
     parser.add_argument("--dataset", default="ucf101")
+
+    parser.add_argument(
+        '--num_folds',
+        type=int,
+        default=3,
+        help='number of folds to run (1, 2, or 3)'
+    )
+
+    parser.add_argument(
+        '--save_m_star_path',
+        type=str,
+        default=None,
+        help='if set, save the converged global model (with args) to this path for attack use'
+    )
+
     args = parser.parse_args()
     return args
 
@@ -273,8 +288,8 @@ if __name__ == '__main__':
     elif args.fed_alg in ['fed_rs']:
         Client = ClientFedRS
 
-    # We perform 3 fold experiments
-    for fold_idx in range(1, 4):
+    # We perform N fold experiments
+    for fold_idx in range(1, args.num_folds + 1):
         # load simulation feature
         dm.load_sim_dict(
             fold_idx=fold_idx
@@ -362,6 +377,12 @@ if __name__ == '__main__':
         # set seeds again
         set_seed(8)
 
+        # track best-test-acc checkpoint for M* — a long sr=1.0 run that overshoots or
+        # plateaus should still yield the strongest model for the downstream attack phase.
+        best_test_acc = -1.0
+        best_epoch = -1
+        best_state_dict = None
+
         # Training steps
         for epoch in range(int(args.num_epochs)):
             # define list varibles that saves the weights, loss, num_sample, etc.
@@ -435,9 +456,25 @@ if __name__ == '__main__':
                 server.inference(dataloader_dict['test'])
                 server.result_dict[epoch]['test'] = server.result
                 server.log_classification_result(
-                    data_split='test', 
+                    data_split='test',
                     metric='acc'
                 )
+                # update best-test-acc checkpoint for M*
+                if args.save_m_star_path:
+                    cur_test_acc = server.result.get('acc', 0.0)
+                    if cur_test_acc > best_test_acc:
+                        best_test_acc = cur_test_acc
+                        best_epoch = epoch
+                        best_state_dict = copy.deepcopy(server.global_model.state_dict())
+                        # incremental save so a kill mid-run still yields the best checkpoint on disk
+                        m_star_path = Path(args.save_m_star_path)
+                        m_star_path.parent.mkdir(parents=True, exist_ok=True)
+                        torch.save(
+                            {'model_state_dict': best_state_dict, 'args': vars(args), 'fold': fold_idx,
+                             'best_test_acc': best_test_acc, 'best_epoch': best_epoch},
+                            m_star_path,
+                        )
+                        logging.info(f'  [M* checkpoint] new best test acc {best_test_acc:.2f} at epoch {epoch} (saved)')
             
             logging.info('---------------------------------------------------------')
             server.log_epoch_result(metric='acc')
@@ -445,6 +482,29 @@ if __name__ == '__main__':
 
         # Performance save code
         save_result_dict[f'fold{fold_idx}'] = server.summarize_dict_results()
+
+        # Save the converged global model (M*) for downstream attack experiments.
+        # Persists the BEST-test-acc checkpoint (not necessarily the final epoch), so a run
+        # that overshoots or plateaus still yields the strongest model for the attack phase.
+        if args.save_m_star_path:
+            m_star_path = Path(args.save_m_star_path)
+            m_star_path.parent.mkdir(parents=True, exist_ok=True)
+            sd = best_state_dict if best_state_dict is not None else copy.deepcopy(server.global_model.state_dict())
+            torch.save(
+                {
+                    'model_state_dict': sd,
+                    'args': vars(args),
+                    'fold': fold_idx,
+                    'best_test_acc': best_test_acc,
+                    'best_epoch': best_epoch,
+                    'final_test_acc': save_result_dict[f'fold{fold_idx}'].get('acc'),
+                },
+                m_star_path,
+            )
+            logging.info(
+                f'Saved M* (best test acc {best_test_acc:.2f} @ epoch {best_epoch}; '
+                f'final {save_result_dict[f"fold{fold_idx}"].get("acc"):.2f}) to {m_star_path}'
+            )
         
         # output to results
         server.save_json_file(

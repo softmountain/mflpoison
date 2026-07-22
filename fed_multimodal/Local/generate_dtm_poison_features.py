@@ -2,6 +2,7 @@
 import argparse
 from pathlib import Path
 
+import numpy as np
 import torch
 
 from fed_multimodal.dtm_poison_gan import (
@@ -44,6 +45,13 @@ def parse_args():
         "--device",
         default="cuda" if torch.cuda.is_available() else "cpu",
     )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="generator RNG seed for reproducible synthetic pools; "
+             "recorded into meta so an independent attack_pool can be proven distinct from the TSTR pool",
+    )
     return parser.parse_args()
 
 
@@ -69,6 +77,14 @@ def build_labels(args, config):
 
 def main():
     args = parse_args()
+    # Seed the global torch RNG BEFORE building the trainer/generator so trainer.generate()'s
+    # z = torch.randn(...) draws are reproducible. Without this the script uses system entropy
+    # (non-reproducible). Recorded into meta so a separately-seeded attack_pool is provably
+    # distinct from the TSTR pool (§6.1 of the fragility protocol).
+    if args.seed is not None:
+        torch.manual_seed(args.seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(args.seed)
     checkpoint = torch.load(args.checkpoint, map_location=args.device)
     if checkpoint.get("gan_type") != "dtm_gan":
         raise ValueError("checkpoint is not a DTM-GAN checkpoint")
@@ -102,6 +118,7 @@ def main():
         "target_strategy": args.target_strategy,
         "source_class": args.source_class,
         "target_class": args.target_class,
+        "seed": args.seed,
         "config": config.to_dict(),
     }
     output_path = Path(args.output_path)

@@ -1,0 +1,36 @@
+{
+  "source_class": 40,
+  "target_class": 23,
+  "malicious_clients": [
+    "0",
+    "1",
+    "2",
+    "3"
+  ],
+  "inject_counts": {
+    "0": 4,
+    "1": 30,
+    "2": 1,
+    "3": 0
+  },
+  "attack_epochs": 15,
+  "sample_rate": 0.2,
+  "baseline": {
+    "acc": 63.47736625514403,
+    "target_recall": 75.56,
+    "source_recall": 82.61,
+    "source_to_target": 4.35
+  },
+  "after": {
+    "acc": 67.43827160493827,
+    "target_recall": 73.33,
+    "source_recall": 86.96,
+    "source_to_target": 6.52
+  },
+  "delta": {
+    "acc": 3.9609053497942384,
+    "target_recall": -2.230000000000004,
+    "source_recall": 4.349999999999994,
+    "source_to_target": 2.17
+  }
+}

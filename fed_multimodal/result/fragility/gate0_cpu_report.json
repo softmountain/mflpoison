@@ -1,0 +1,108 @@
+{
+  "env": {
+    "git_rev": "ebb190e6cec72a8ac2224171af9d50342b99dbb0",
+    "git_branch": "temporal-adaptive-gan-evaluation",
+    "git_dirty": "M fed_multimodal/Local/generate_dtm_poison_features.py\n M fed_multimodal/Local/train_synthetic.py\n M fed_multimodal/experiment/ucf101/train.py\n?? REFACTOR_PROPOSAL.md\n?? docs/\n?? fed_multimodal/Local/train_fed_dtm_poison.py\n?? fed_multimodal/Local/visualize_dtm_features.py\n?? fed_multimodal/experiment/ucf101/analyze_poison_results.py\n?? fed_multimodal/experiment/ucf101/attribute_against_baseline.py\n?? fed_multimodal/experiment/ucf101/attribute_fragility.py\n?? fed_multimodal/experiment/ucf101/compute_fragility.py\n?? fed_multimodal/experiment/ucf101/extract_class_centers.py\n?? fed_multimodal/experiment/ucf101/fragility/\n?? fed_multimodal/experiment/ucf101/plot_per_group_lines.py\n?? fed_multimodal/experiment/ucf101/run_fragility_batch.py\n?? fed_multimodal/experiment/ucf101/run_poison_batch.py\n?? fed_multimodal/experiment/ucf101/select_source_target.py\n?? fed_multimodal/experiment/ucf101/select_target_combos.py\n?? fed_multimodal/experiment/ucf101/select_targets_v2.py\n?? fed_multimodal/experiment/ucf101/train_label_flip.py\n?? fed_multimodal/features/data_partitioning/ucf101/make_partition_from_features.py\n?? fed_multimodal/result/\n?? poison_attack_bundle.zip\n?? poison_attack_bundle/",
+    "python": "3.9.23",
+    "torch": "1.13.0+cu117",
+    "cuda": "11.7",
+    "cudnn": "8500",
+    "device": "NVIDIA GeForce RTX 3090"
+  },
+  "artifacts": {
+    "audio_feature_pkl": {
+      "path": "/home/xp/fedpoi/fed_multimodal/results/feature/audio/mfcc/ucf101/feature.pkl",
+      "sha256": "8909e97f2e6805f60557fbfaf075e8980c440d747a7876a0fce6ebb88a4a3cf9",
+      "bytes": 707124476
+    },
+    "video_feature_pkl": {
+      "path": "/home/xp/fedpoi/fed_multimodal/results/feature/video/mobilenet_v2/ucf101/feature.pkl",
+      "sha256": "1fc7fd6bcd36fad8a6fb61236718e9a09c83beda43159c5d12be412adb654305",
+      "bytes": 240143493
+    },
+    "m_star": {
+      "path": "/home/xp/fedpoi/fed_multimodal/Local/results/poison_attack/M_star_alpha5_sr1.pt",
+      "sha256": "d4631bd5962aaf7516672f6e13cf955e78baf48ae2e3b5728d1a730d776c5f5c",
+      "bytes": 3313001
+    },
+    "dtm_gan_ckpt": {
+      "path": "/home/xp/fedpoi/fed_multimodal/Local/results/dtm_poison_gan/final_dtm_final.pt",
+      "sha256": "fce504c7489cbc5930042fc5740cdbae418f9cd0957cc1a472e5f4ba3957837e",
+      "bytes": 159600939
+    },
+    "tstr_pool_final5100": {
+      "path": "/home/xp/fedpoi/fed_multimodal/Local/results/dtm_poison_features/dtm_final_dtm_final_train5100.pt",
+      "sha256": "ce63cba7d8818590ccca8acc752e828e13703591d6931d1545dae8ceff94b280",
+      "bytes": 1051174535
+    },
+    "real_centers_alpha5": {
+      "path": "/home/xp/fedpoi/fed_multimodal/Local/results/poison_attack/centers_alpha5/real_centers.pt",
+      "sha256": "531d5e4ab4fab3d86c651a871e8cb745d682f7dbd6805558e37fb2ed305f7995",
+      "bytes": 170197
+    },
+    "synth_centers_alpha5": {
+      "path": "/home/xp/fedpoi/fed_multimodal/Local/results/poison_attack/centers_alpha5/synth_centers.pt",
+      "sha256": "489f0b7fc1f8bf393b40e3f07f615c0cc32441cde66212fd382eb83cdf64897a",
+      "bytes": 170378
+    }
+  },
+  "class_map": {
+    "0": "ApplyEyeMakeup",
+    "1": "ApplyLipstick",
+    "2": "Archery",
+    "3": "BabyCrawling",
+    "4": "BalanceBeam",
+    "5": "BandMarching",
+    "6": "BasketballDunk",
+    "7": "BlowDryHair",
+    "8": "BlowingCandles",
+    "9": "BodyWeightSquats",
+    "10": "Bowling",
+    "11": "BoxingPunchingBag",
+    "12": "BoxingSpeedBag",
+    "13": "BrushingTeeth",
+    "14": "CliffDiving",
+    "15": "CricketBowling",
+    "16": "CricketShot",
+    "17": "CuttingInKitchen",
+    "18": "FieldHockeyPenalty",
+    "19": "FloorGymnastics",
+    "20": "FrisbeeCatch",
+    "21": "FrontCrawl",
+    "22": "Haircut",
+    "23": "HammerThrow",
+    "24": "Hammering",
+    "25": "HandstandPushups",
+    "26": "HandstandWalking",
+    "27": "HeadMassage",
+    "28": "IceDancing",
+    "29": "Knitting",
+    "30": "LongJump",
+    "31": "MoppingFloor",
+    "32": "ParallelBars",
+    "33": "PlayingCello",
+    "34": "PlayingDaf",
+    "35": "PlayingDhol",
+    "36": "PlayingFlute",
+    "37": "PlayingSitar",
+    "38": "Rafting",
+    "39": "ShavingBeard",
+    "40": "Shotput",
+    "41": "SkyDiving",
+    "42": "SoccerPenalty",
+    "43": "StillRings",
+    "44": "SumoWrestling",
+    "45": "Surfing",
+    "46": "TableTennisShot",
+    "47": "Typing",
+    "48": "UnevenBars",
+    "49": "WallPushups",
+    "50": "WritingOnBoard"
+  },
+  "fragility_formula": {
+    "max_abs_diff": 0.0,
+    "passed": true,
+    "z_H_mean": 2.1769078914218755e-18,
+    "z_gap_std": 1.0
+  }
+}
