@@ -1,26 +1,20 @@
-import sys
 import unittest
 from pathlib import Path
 
+from experiments._dispatch import EVAL_SCRIPTS
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPERIMENTS = ROOT / "experiments"
-if str(EXPERIMENTS) not in sys.path:
-    sys.path.insert(0, str(EXPERIMENTS))
-
-from _dispatch import config_to_cli_arguments, load_experiment_config
 
 
 class ExperimentConfigTest(unittest.TestCase):
-    def test_generator_config_is_translated_to_legacy_cli(self):
-        config = load_experiment_config(ROOT / "configs" / "generators" / "dtm.json")
-        arguments = config_to_cli_arguments(config)
-
-        self.assertEqual(config["generator"]["variant"], "dtm")
-        self.assertIn("--lambda_distribution", arguments)
-        self.assertIn("--lambda_diversity", arguments)
-        self.assertIn("--seed", arguments)
-        self.assertNotIn("--dataset", arguments)
+    def test_legacy_evaluator_dispatch_targets_are_retained(self):
+        self.assertEqual(
+            set(EVAL_SCRIPTS),
+            {"teacher_guided", "legacy", "kplus1_legacy", "temporal_adaptive", "dtm"},
+        )
+        for script in EVAL_SCRIPTS.values():
+            with self.subTest(script=script):
+                self.assertTrue((ROOT / script).is_file())
 
 
 if __name__ == "__main__":

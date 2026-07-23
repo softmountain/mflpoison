@@ -1,6 +1,6 @@
 dataset:
   name: ucf101
-  root: /path/to/fedmm/feature-root
+  root: fed_multimodal/results
   split: "1"
   fold: 1
   alpha: 1.0

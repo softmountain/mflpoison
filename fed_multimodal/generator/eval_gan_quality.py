@@ -625,7 +625,8 @@ def main():
     parser.add_argument('--video_feat', type=str, default='mobilenet_v2')
     parser.add_argument('--batch_size', type=int, default=16)
     parser.add_argument('--num_batches', type=int, default=10)
-    parser.add_argument('--output_dir', type=str, default='./gan_analysis')
+    parser.add_argument('--output_dir', type=str,
+                        default='artifacts/legacy_evaluation/teacher_guided')
     parser.add_argument('--hid_size', type=int, default=64)
     parser.add_argument('--att', action='store_true')
     parser.add_argument('--att_name', type=str, default='base')

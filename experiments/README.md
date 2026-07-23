@@ -24,15 +24,18 @@ and evaluation entry points:
 
 ```bash
 python experiments/evaluate_generator.py \
-  --generator dtm --checkpoint path/to/checkpoint.pt -- --num_batches 20
+  --generator dtm --checkpoint path/to/checkpoint.pt -- \
+  --model_path path/to/teacher.pt \
+  --dataset_dir /path/to/ucf101 --num_batches 20
 
 python experiments/generate_synthetic.py \
   --generator dtm --checkpoint path/to/checkpoint.pt \
   --num_samples 5100 --target_strategy balanced \
-  --attack_mode clean_label --output outputs/dtm/synthetic.pt
+  --attack_mode clean_label --output artifacts/manual/dtm-synthetic.pt
 
 python experiments/evaluate_tstr.py \
-  --synthetic_data outputs/dtm/synthetic.pt --num_epochs 100
+  --synthetic_data artifacts/manual/dtm-synthetic.pt -- \
+  --dataset_dir /path/to/ucf101 --num_epochs 100
 ```
 
 Synthetic artifacts use the canonical SyntheticBatch schema by default. The

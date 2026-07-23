@@ -1,8 +1,0 @@
-{
-  "generator": {
-    "family": "kplus1",
-    "variant": "legacy"
-  },
-  "seed": 42,
-  "dataset": "ucf101"
-}

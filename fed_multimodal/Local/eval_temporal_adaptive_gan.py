@@ -18,10 +18,11 @@ from fed_multimodal.poison_gan.kplus1 import build_kplus1_discriminator
 def parse_args():
     parser = argparse.ArgumentParser(description="Evaluate a temporal-adaptive GAN checkpoint")
     parser.add_argument("--checkpoint", type=str, required=True)
-    parser.add_argument("--model_path", type=str, default="fed_multimodal/Local/results/local_training/best_model.pt")
+    parser.add_argument("--model_path", type=str, required=True,
+                        help="Legacy K-class teacher checkpoint used to rebuild the discriminator")
     parser.add_argument("--data_dir", type=str, default="fed_multimodal/results")
     parser.add_argument("--dataset_dir", type=str, default="fed_multimodal/datasets/ucf101")
-    parser.add_argument("--output_dir", type=str, default="fed_multimodal/Local/results/temporal_adaptive_gan_eval/default")
+    parser.add_argument("--output_dir", type=str, default="artifacts/legacy_evaluation/temporal_adaptive")
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--num_workers", type=int, default=4)
     parser.add_argument("--num_batches", type=int, default=20)

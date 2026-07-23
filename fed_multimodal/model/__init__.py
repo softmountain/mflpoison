@@ -1,15 +1,17 @@
-"""
-Multimodal models for federated learning
-"""
+"""Multimodal model compatibility exports used by the UCF101 adapter."""
 
-from .mm_models import MMActionClassifier, SERClassifier, ImageTextClassifier, HARClassifier, ECGClassifier
-from .unimodal_models import *
-from .common_fusions import *
+from .mm_models import (
+    ECGClassifier,
+    HARClassifier,
+    ImageTextClassifier,
+    MMActionClassifier,
+    SERClassifier,
+)
 
 __all__ = [
-    'MMActionClassifier',
-    'SERClassifier',
-    'ImageTextClassifier',
-    'HARClassifier',
-    'ECGClassifier'
+    "MMActionClassifier",
+    "SERClassifier",
+    "ImageTextClassifier",
+    "HARClassifier",
+    "ECGClassifier",
 ]

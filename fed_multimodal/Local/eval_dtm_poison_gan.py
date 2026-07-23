@@ -20,7 +20,8 @@ def parse_args():
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument(
         "--model_path",
-        default="fed_multimodal/Local/results/local_training/best_model.pt",
+        required=True,
+        help="Legacy K-class teacher checkpoint used to rebuild the discriminator",
     )
     parser.add_argument("--data_dir", default="fed_multimodal/results")
     parser.add_argument(
@@ -29,7 +30,7 @@ def parse_args():
     )
     parser.add_argument(
         "--output_dir",
-        default="fed_multimodal/Local/results/dtm_poison_gan_eval/default",
+        default="artifacts/legacy_evaluation/dtm",
     )
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--num_workers", type=int, default=4)

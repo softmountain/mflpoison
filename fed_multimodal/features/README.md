@@ -1,93 +1,16 @@
-# Feature processing
+# UCF101 特征准备
 
-## Table of Contents
-* Data partitioning
-* Simulation features
-* Feature processing
+本目录只保留当前统一场景所需的 UCF101 上游数据工具：
 
-### Step 1: Data partitioning
-The data partioning has 2 possibilities, and it will be based on dataset:
+1. `data_partitioning/partition_manager.py` 与 `ucf101/data_partition.py`：建立 fold/alpha/client 划分；
+2. `simulation_features/simulation_manager.py` 与 `ucf101/`：生成缺失模态、标签噪声或缺失标签配置；
+3. `feature_processing/feature_manager.py` 与 `ucf101/`：提取 MFCC 音频和 MobileNetV2 视频特征。
 
-* For many sentiment-related dataset, the client will be decided by the speaker
-* For datasets that do not have natural partition (e.g. speaker), the data will be partitioned using direchlet allocation 
+runner 本身不调用这些脚本，而是读取已经生成的结果：
 
-
-If we use the UCF101 dataset as an example:
-
-To process the location data, we run the following:
-
-```
-cd data_partitioning/ufc101
-python3 data_partition.py --alpha ALPHA_VALUE_0_TO_1 --raw_data_dir PATH --output_dir PATH
+```text
+fed_multimodal/results/feature/audio/mfcc/ucf101/alpha10/fold1/
+fed_multimodal/results/feature/video/mobilenet_v2/ucf101/alpha10/fold1/
 ```
 
-Each client's data follows the following format: 
-### [key, data_file, label]
-
-
-### Step 2: Simulate Federated Features
-The current simulation has several features:
-
-* Missing modality (Follow Bernoulli distribution)
-* Label noise (Follow FedAudio)
-* Missing labels (Follow Bernoulli distribution)
-
-
-#### To simulate missing modality:
-
-```
-cd simulation_features/ufc101
-python3 simulation_feature.py --alpha ALPHA_VALUE_0_TO_1 --en_missing_modality --missing_modailty_rate VALUE_0_TO_1 --output_dir PATH
-```
-
-#### To simulate label noise:
-
-```
-cd simulation_features/ufc101
-python3 simulation_feature.py --alpha ALPHA_VALUE_0_TO_1 --en_label_nosiy --label_nosiy_level VALUE_0_TO_1  --output_dir PATH
-```
-
-
-#### To simulate missing labels:
-
-```
-cd simulation_features/ufc101
-python3 simulation_feature.py --alpha ALPHA_VALUE_0_TO_1 --en_missing_label --missing_label_rate VALUE_0_TO_1  --output_dir PATH
-```
-
-Each client's data follows the following format: 
-### [key, data_file, label, [MA_miss, MB_miss, label_with_noise, missing_label]]
-
-
-* MA_miss = 0, Modality A is not missing
-* MB_miss = 0, Modality B is not missing
-* missing_label = 0, label is not missing
-
-### The simulation feature is independ of feature processing
-
-### Step 3: Data Features
-
-We generate pretrained features for each data set:
-
-* Audio - MFCC 80 dim
-* Framewise Video - MobileNetv2
-* Text - MobileBert
-
-To generate features for UCF data set:
-
-```
-cd feature_processing/ufc101
-
-# extract mobilenet_v2 feature
-python3 extract_frame_feature.py --feature_type mobilenet_v2 --alpha ALPHA_VALUE_0_TO_1 --raw_data_dir PATH --output_dir PATH
-
-# extract mfcc feature
-python3 extract_audio_feature.py --feature_type mfcc --alpha ALPHA_VALUE_0_TO_1 --raw_data_dir PATH --output_dir PATH
-```
-
-Now you should be able to the output folder with the following folders:
-
-/feature  
-/partition
-/simulation_feature
-
+默认 `dataset.alpha: 1.0` 映射到 `alpha10`。训练客户端、dev 和 test 必须在音频与视频目录中一一对应。
