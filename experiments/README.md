@@ -1,9 +1,6 @@
-# Unified UCF101 scenario entry point
+# 实验入口与兼容工具
 
-The production poisoning flow has one entry point. It trains the clean global
-model, selects M* on the development split, trains one generator per malicious
-client partition, executes clean/attack/defended branches with the same client
-schedule, and writes lineage and round audit records.
+完整的 UCF101 联邦生成式中毒与防御实验只有一个生产入口：
 
 ```bash
 python -m mflpoison.runner \
@@ -14,13 +11,12 @@ python experiments/run_scenario.py \
   --artifact-root artifacts/my-run
 ```
 
-`experiments/train_generator.py`, `train_dtm_poison_gan.py`, and
-`train_temporal_adaptive_gan.py` are temporary aliases for the same runner.
-They require the complete eight-section scenario config; they no longer load a
-centralized `full_train` dataset.
+`run_scenario.py` 只转发到 `mflpoison.runner.__main__`。`train_generator.py`、
+`fed_multimodal/Local/train_dtm_poison_gan.py` 和
+`train_temporal_adaptive_gan.py` 是旧命令名兼容 wrapper，同样要求完整八段场景配置；
+它们不再提供集中式 `full_train` 流程。
 
-Generator checkpoints remain usable through the legacy-compatible inference
-and evaluation entry points:
+## 旧 checkpoint 评估
 
 ```bash
 python experiments/evaluate_generator.py \
@@ -28,7 +24,16 @@ python experiments/evaluate_generator.py \
   --model_path path/to/teacher.pt \
   --data_dir fed_multimodal/results --alpha 1.0 --fold 1 \
   --partition test --num_batches 20
+```
 
+支持 `teacher_guided`、`kplus1_legacy`、`dtm` 和 `temporal_adaptive`。
+实现位于 `fed_multimodal.legacy_evaluation`；大写 `fed_multimodal/Local` 中的
+评估文件只是旧路径 wrapper。默认读取 FedMM `test`；训练侧评估必须显式传入
+`--partition client --client-id ID`，不会联合读取多个客户端。
+
+## 手工生成与 TSTR
+
+```bash
 python experiments/generate_synthetic.py \
   --generator dtm --checkpoint path/to/checkpoint.pt \
   --num_samples 5100 --target_strategy balanced \
@@ -40,15 +45,10 @@ python experiments/evaluate_tstr.py \
   --num_epochs 100
 ```
 
-Synthetic artifacts use the canonical SyntheticBatch schema by default. The
-TSTR entry point reads canonical and historical artifact schemas, selects the
-victim checkpoint on the fixed FedMM `dev` partition, and touches FedMM `test`
-only for the final evaluation. This intentionally differs from the former
-random 10% split of centralized training data and is not numerically equivalent.
+手工生成文件使用 canonical `SyntheticBatch` schema；TSTR 也能读取保留的历史
+schema。TSTR 固定在同一 FedMM `dev` 上选模，模型确定后只在 `test` 上评估一次，
+不再从集中训练数据随机切 validation，因此不承诺与旧 TSTR 数值等价。
 
-Generator evaluators default to FedMM `test`. Train-side quality evaluation
-must use `--partition client --client-id ID`; deprecated `--use_train` also
-requires a client ID. Implementations live in
-`fed_multimodal.legacy_evaluation`; capitalized `fed_multimodal/Local` files are
-thin command wrappers only. K+1-family reports use timestamped JSON files and
-record partition, client, alpha, fold, seed, and teacher-checkpoint lineage.
+这些工具的输出属于 `artifacts/manual/` 或 `artifacts/legacy_evaluation/`，不会进入
+统一 runner 的 `summary.json`。生产调用链、标准结果树和当前实际结果状态见
+[`docs/CURRENT_PIPELINE_STRUCTURE.md`](../docs/CURRENT_PIPELINE_STRUCTURE.md)。

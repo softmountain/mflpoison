@@ -279,7 +279,7 @@ class FedMMGeneratorTrainer(GeneratorTrainer):
             warm_start_artifact=previous_artifact,
         )
         return request.artifact(
-            checkpoint_path=str(checkpoint_path),
+            checkpoint_path=str(checkpoint_path.resolve()),
             checkpoint_hash=file_sha256(checkpoint_path),
             metadata={"metrics": metrics},
         )

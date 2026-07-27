@@ -132,6 +132,7 @@ class ScenarioRunner:
     def _progress_payload(progress) -> Dict[str, Any]:
         return ScenarioResumeStore.progress_payload(progress)
     def run(self) -> ScenarioResult:
+        seed_runtime(self.config.federation.seed)
         prepared = self.adapter.prepare()
         if prepared is not None:
             self.adapter = prepared

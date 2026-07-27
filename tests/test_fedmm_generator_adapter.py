@@ -5,6 +5,7 @@ from pathlib import Path
 import torch
 
 from mflpoison.adapters.fedmm.generator import FedMMGeneratorTrainer
+from mflpoison.artifacts import load_generator_artifact, save_generator_artifact
 from mflpoison.core.types import GlobalSnapshot, ModelSpec
 from mflpoison.generators.lifecycle import (
     ClientGeneratorPartition,
@@ -57,6 +58,32 @@ class _TestFedMMGeneratorTrainer(FedMMGeneratorTrainer):
 
 
 class FedMMGeneratorAdapterTest(unittest.TestCase):
+    def test_relative_output_path_persists_a_reloadable_manifest(self):
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as directory:
+            output_dir = Path(directory).relative_to(Path.cwd())
+            trainer = _TestFedMMGeneratorTrainer(output_dir)
+            snapshot = GlobalSnapshot(
+                state={"weight": torch.tensor([0.0])},
+                round_index=0,
+                dev_metrics={},
+                model_spec=ModelSpec(name="tiny"),
+                partition_hash="global-partition",
+            )
+            artifact = trainer.fit(
+                "client-a",
+                snapshot,
+                object(),
+                "client-partition",
+                seed=1,
+            )
+            manifest_path = Path(directory) / "manifests" / "artifact.json"
+            save_generator_artifact(artifact, manifest_path)
+
+            loaded = load_generator_artifact(manifest_path)
+
+            self.assertTrue(Path(loaded.checkpoint_path).is_absolute())
+            self.assertEqual(loaded.content_hash, artifact.content_hash)
+
     def test_implements_lifecycle_protocol_and_records_request_lineage(self):
         with tempfile.TemporaryDirectory() as directory:
             trainer = _TestFedMMGeneratorTrainer(directory)

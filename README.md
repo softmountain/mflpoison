@@ -7,7 +7,8 @@ python -m mflpoison.runner \
   --config configs/scenarios/ucf101_generative_poison_defense.yaml
 ```
 
-完整代码、训练阶段、输入数据和结果文件映射见 [当前流程与结果结构说明](docs/CURRENT_PIPELINE_STRUCTURE.md)。架构约束和兼容边界见 [重构说明](REFACTORING.md)。
+当前架构、代码调用链、输入数据、结果目录和兼容边界统一以
+[当前流程与结果结构说明](docs/CURRENT_PIPELINE_STRUCTURE.md) 为准。
 
 ## 当前流程
 
@@ -20,6 +21,17 @@ UCF101 FedMM 客户端特征
   -> 服务器 validate / detect / decide / sanitize / aggregate
   -> test、攻击成功率和检测指标汇总
 ```
+
+生产调用链为：
+
+```text
+runner.__main__ -> builder -> ScenarioRunner -> FedAvgCoordinator
+```
+
+`ScenarioRunner` 负责预训练、M*、每客户端生成器和三条分支；
+`FedAvgCoordinator` 负责真实的逐轮客户端训练、防御处理、聚合与 dev 评估。
+仓库中保留的 `mflpoison/federated/engine.py`、`attacks/schedule.py` 和
+`attacks/injector.py` 是兼容/测试接口，不在上述生产调用链中。
 
 默认配置使用：
 
@@ -35,7 +47,7 @@ UCF101 FedMM 客户端特征
 
 ## 安装
 
-推荐使用已有的 `poigan` Conda 环境；重新安装时：
+当前本机验证使用 `/mnt/sda/mtzh/xp/envs/fedpoi-py39` 环境；重新安装时：
 
 ```bash
 pip install -r requirements.txt
@@ -54,9 +66,13 @@ Python 3.9 / CUDA 11.7 版本快照，不会作为普通安装的隐式依赖。
 验证：
 
 ```bash
-conda run -n poigan python -c "import torch, fed_multimodal, mflpoison; print(torch.__version__)"
-conda run -n poigan pytest -q
+conda run -p /mnt/sda/mtzh/xp/envs/fedpoi-py39 \
+  python -c "import torch, fed_multimodal, mflpoison; print(torch.__version__)"
+conda run -p /mnt/sda/mtzh/xp/envs/fedpoi-py39 pytest -q
 ```
+
+当前工作区已完成 `101` 项测试、真实 `alpha10/fold1` adapter smoke，以及一次
+默认 50 轮预训练 + 三个 20 轮分支的完整 GPU 实验。完整运行状态和指标见结构报告。
 
 ## 输入数据
 
@@ -134,5 +150,9 @@ partition、client、alpha、fold、seed 和 teacher checkpoint，重复运行�
 - `experiments/`：统一入口与旧 checkpoint 工具；
 - `tests/`：契约、攻击、防御、联邦引擎、生成器 lifecycle 和 runner 测试；
 - `artifacts/`：统一实验结果，始终不进入 Git。
+
+`artifacts/legacy_reference/` 仅保存历史分析证据，不属于当前 runner 结果。
+默认结果目录 `artifacts/ucf101_generative_poison_defense/` 已在本机生成，约 3.8 GB；
+主要结果见其中的 `summary.json`，逐轮审计见 `round_records.pt`。
 
 本项目仅用于防御性安全研究和多模态联邦学习鲁棒性评估。

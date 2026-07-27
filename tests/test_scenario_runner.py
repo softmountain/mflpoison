@@ -60,6 +60,15 @@ class _Adapter:
         }
 
 
+class _RandomModelAdapter(_Adapter):
+    def build_model(self, state=None):
+        model = torch.nn.Module()
+        model.register_parameter("weight", torch.nn.Parameter(torch.rand(1)))
+        if state is not None:
+            model.load_state_dict(dict(state), strict=True)
+        return model
+
+
 class _ClientTrainer:
     def train(
         self,
@@ -174,6 +183,36 @@ def _config(root):
 
 
 class ScenarioRunnerTest(unittest.TestCase):
+    def test_federation_seed_fixes_random_initial_model(self):
+        with tempfile.TemporaryDirectory() as directory:
+            snapshots = []
+            for run_name in ("first", "second"):
+                root = Path(directory) / run_name
+                payload = _config(root).to_dict()
+                payload["generator"]["enabled"] = False
+                payload["attack"]["enabled"] = False
+                payload["defense"]["enabled"] = False
+                config = ScenarioConfig.from_mapping(payload)
+                result = ScenarioRunner(
+                    config,
+                    adapter=_RandomModelAdapter(),
+                    client_trainer=_ClientTrainer(),
+                    aggregator=WeightedMean(),
+                    artifact_root=root,
+                ).run()
+                snapshots.append(result.initial_snapshot)
+
+            self.assertEqual(
+                snapshots[0].content_hash,
+                snapshots[1].content_hash,
+            )
+            self.assertTrue(
+                torch.equal(
+                    snapshots[0].state["weight"],
+                    snapshots[1].state["weight"],
+                )
+            )
+
     def test_tiny_end_to_end_uses_one_m_star_schedule_and_server_boundary(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
