@@ -3,6 +3,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import yaml
+
 from mflpoison.core.config import ScenarioConfig, load_scenario_config
 
 
@@ -67,10 +69,6 @@ class ScenarioConfigTest(unittest.TestCase):
             self.assertEqual(loaded.model.kwargs["dropout"], 0.2)
             self.assertEqual(loaded.attack.malicious_clients, ("0",))
 
-            try:
-                import yaml
-            except ImportError:
-                return
             yaml_path = root / "scenario.yaml"
             yaml_path.write_text(yaml.safe_dump(config), encoding="utf-8")
             from_yaml = load_scenario_config(yaml_path)

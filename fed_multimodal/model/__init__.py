@@ -1,17 +1,5 @@
-"""Multimodal model compatibility exports used by the UCF101 adapter."""
+"""UCF101 model compatibility exports."""
 
-from .mm_models import (
-    ECGClassifier,
-    HARClassifier,
-    ImageTextClassifier,
-    MMActionClassifier,
-    SERClassifier,
-)
+from .mm_models import MMActionClassifier
 
-__all__ = [
-    "MMActionClassifier",
-    "SERClassifier",
-    "ImageTextClassifier",
-    "HARClassifier",
-    "ECGClassifier",
-]
+__all__ = ["MMActionClassifier"]

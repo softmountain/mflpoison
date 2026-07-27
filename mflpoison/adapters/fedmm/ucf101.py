@@ -160,7 +160,6 @@ class UCF101FedMMAdapter:
                     "audio/video partition length mismatch for client " + str(client_id)
                 )
             paired_identity = _paired_identity(audio, video)
-            manager.get_label_dist(video, client_id)
             is_eval = client_id in ("dev", "test")
             simulation = None if is_eval else manager.get_client_sim_dict(client_id)
             client_manifest = {

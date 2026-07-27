@@ -3,24 +3,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 import torch
 
-try:
-    from mflpoison.core.types import AggregationResult, DefenseDecision
-except ImportError:
-
-    @dataclass(frozen=True)
-    class DefenseDecision:  # type: ignore[no-redef]
-        client_id: str
-        action: str
-        scores: Mapping[str, float]
-        thresholds: Mapping[str, float]
-        reason: str
-        final_weight: float
-
-    @dataclass(frozen=True)
-    class AggregationResult:  # type: ignore[no-redef]
-        state: Mapping[str, torch.Tensor]
-        decisions: Sequence[DefenseDecision]
-        diagnostics: Mapping[str, Any]
+from mflpoison.core.types import AggregationResult, DefenseDecision
 
 from .common import update_weight
 from .detection import (

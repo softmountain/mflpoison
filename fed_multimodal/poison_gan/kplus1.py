@@ -1,3 +1,5 @@
+from collections.abc import Mapping
+
 import torch
 import torch.nn as nn
 
@@ -18,6 +20,12 @@ def _checkpoint_args(checkpoint):
     return {}
 
 
+def _argument_value(arguments, name, default):
+    if isinstance(arguments, Mapping):
+        return arguments.get(name, default)
+    return getattr(arguments, name, default)
+
+
 def load_teacher_model(
     model_path,
     num_classes,
@@ -34,9 +42,13 @@ def load_teacher_model(
         num_classes=num_classes,
         audio_input_dim=audio_input_dim,
         video_input_dim=video_input_dim,
-        d_hid=saved_args.get("hid_size", hid_size),
-        en_att=saved_args.get("att", saved_args.get("en_att", att)),
-        att_name=saved_args.get("att_name", att_name),
+        d_hid=_argument_value(saved_args, "hid_size", hid_size),
+        en_att=_argument_value(
+            saved_args,
+            "att",
+            _argument_value(saved_args, "en_att", att),
+        ),
+        att_name=_argument_value(saved_args, "att_name", att_name),
     ).to(device)
     model.load_state_dict(_checkpoint_state_dict(checkpoint), strict=True)
     return model, checkpoint
@@ -68,9 +80,13 @@ def build_kplus1_discriminator(
         num_classes=num_classes + 1,
         audio_input_dim=audio_input_dim,
         video_input_dim=video_input_dim,
-        d_hid=saved_args.get("hid_size", hid_size),
-        en_att=saved_args.get("att", saved_args.get("en_att", att)),
-        att_name=saved_args.get("att_name", att_name),
+        d_hid=_argument_value(saved_args, "hid_size", hid_size),
+        en_att=_argument_value(
+            saved_args,
+            "att",
+            _argument_value(saved_args, "en_att", att),
+        ),
+        att_name=_argument_value(saved_args, "att_name", att_name),
     ).to(device)
 
     teacher_state = teacher.state_dict()

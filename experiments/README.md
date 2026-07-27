@@ -26,7 +26,8 @@ and evaluation entry points:
 python experiments/evaluate_generator.py \
   --generator dtm --checkpoint path/to/checkpoint.pt -- \
   --model_path path/to/teacher.pt \
-  --dataset_dir /path/to/ucf101 --num_batches 20
+  --data_dir fed_multimodal/results --alpha 1.0 --fold 1 \
+  --partition test --num_batches 20
 
 python experiments/generate_synthetic.py \
   --generator dtm --checkpoint path/to/checkpoint.pt \
@@ -35,10 +36,19 @@ python experiments/generate_synthetic.py \
 
 python experiments/evaluate_tstr.py \
   --synthetic_data artifacts/manual/dtm-synthetic.pt -- \
-  --dataset_dir /path/to/ucf101 --num_epochs 100
+  --data_dir fed_multimodal/results --alpha 1.0 --fold 1 \
+  --num_epochs 100
 ```
 
 Synthetic artifacts use the canonical SyntheticBatch schema by default. The
-TSTR entry point reads both canonical and legacy artifacts, selects the victim
-checkpoint on a held-out validation split, and touches the real test split only
-for the final evaluation.
+TSTR entry point reads canonical and historical artifact schemas, selects the
+victim checkpoint on the fixed FedMM `dev` partition, and touches FedMM `test`
+only for the final evaluation. This intentionally differs from the former
+random 10% split of centralized training data and is not numerically equivalent.
+
+Generator evaluators default to FedMM `test`. Train-side quality evaluation
+must use `--partition client --client-id ID`; deprecated `--use_train` also
+requires a client ID. Implementations live in
+`fed_multimodal.legacy_evaluation`; capitalized `fed_multimodal/Local` files are
+thin command wrappers only. K+1-family reports use timestamped JSON files and
+record partition, client, alpha, fold, seed, and teacher-checkpoint lineage.

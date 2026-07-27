@@ -6,6 +6,9 @@ from pathlib import Path
 
 from mflpoison.core.config import ScenarioConfig, load_config
 from mflpoison.runner import build_default_runner
+from mflpoison.runner.scenario import (
+    build_default_runner as legacy_build_default_runner,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -97,6 +100,10 @@ class RunnerBuilderValidationTest(unittest.TestCase):
         expected = Path(runner.artifact_root) / "generator_checkpoints" / "base"
         self.assertEqual(trainer.variant, "dtm")
         self.assertEqual(trainer.output_dir, expected)
+
+    def test_historical_scenario_builder_import_remains_compatible(self):
+        runner = legacy_build_default_runner(scenario_config())
+        self.assertEqual(runner.config.dataset.name, "ucf101")
 
     def test_compatibility_entry_points_can_import_the_runner(self):
         scripts = (

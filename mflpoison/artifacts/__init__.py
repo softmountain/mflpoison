@@ -14,7 +14,7 @@ from .round_record import (
     save_round_record_bundle,
 )
 from .snapshot import load_snapshot, save_snapshot
-from .synthetic import load_synthetic, save_synthetic
+from .synthetic import load_synthetic, save_synthetic, synthetic_batch_from_payload
 
 __all__ = [
     "build_manifest",
@@ -31,6 +31,7 @@ __all__ = [
     "round_record_hash",
     "save_snapshot",
     "save_synthetic",
+    "synthetic_batch_from_payload",
     "verify_generator_lineage",
     "write_manifest",
 ]

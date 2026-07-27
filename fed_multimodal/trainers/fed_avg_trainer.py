@@ -1,143 +1,73 @@
+import torch
 
-import collections
-import numpy as np
-import pandas as pd
-import copy, pdb, time, warnings, torch
-
-
-from torch import nn
-from torch.utils import data
-from sklearn.metrics import confusion_matrix
-from torch.utils.data import DataLoader, Dataset
-from sklearn.metrics import accuracy_score, recall_score
-
-# import optimizer
+from .evaluation import EvalMetric
 from .optimizer import FedProxOptimizer
 
-warnings.filterwarnings('ignore')
-from .evaluation import EvalMetric
 
+class ClientFedAvg:
+    """UCF101 multimodal local trainer retained behind the typed adapter."""
 
-class ClientFedAvg(object):
     def __init__(
-        self, 
-        args, 
-        device, 
-        criterion, 
-        dataloader, 
-        model, 
+        self,
+        args,
+        device,
+        criterion,
+        dataloader,
+        model,
         label_dict=None,
-        num_class=None
+        num_class=None,
     ):
+        del label_dict, num_class
+        if args.dataset != "ucf101":
+            raise ValueError("ClientFedAvg only supports ucf101")
+        if args.modality != "multimodal":
+            raise ValueError("ClientFedAvg only supports multimodal UCF101 batches")
         self.args = args
         self.model = model
         self.device = device
         self.criterion = criterion
         self.dataloader = dataloader
-        self.multilabel = True if args.dataset == 'ptb-xl' else False
-        
+
     def get_parameters(self):
-        # Return model parameters
         return self.model.state_dict()
-    
+
     def get_model_result(self):
-        # Return model results
         return self.result
-    
-    def get_test_true(self):
-        # Return test labels
-        return self.test_true
-    
-    def get_test_pred(self):
-        # Return test predictions
-        return self.test_pred
-    
-    def get_train_groundtruth(self):
-        # Return groundtruth used for training
-        return self.train_groundtruth
 
     def update_weights(self):
-        # Set mode to train model
         self.model.train()
-
-        # initialize eval
-        self.eval = EvalMetric(self.multilabel)
-        
-        # optimizer
-        if self.args.fed_alg in ['fed_avg', 'fed_opt']:
+        evaluator = EvalMetric(multilabel=False)
+        if self.args.fed_alg in {"fed_avg", "fed_opt"}:
             optimizer = torch.optim.SGD(
-                self.model.parameters(), 
-                lr=self.args.learning_rate,
-                momentum=0.9,
-                weight_decay=1e-5
-            )
-        else:
-            optimizer = FedProxOptimizer(
-                self.model.parameters(), 
+                self.model.parameters(),
                 lr=self.args.learning_rate,
                 momentum=0.9,
                 weight_decay=1e-5,
-                mu=self.args.mu
             )
-            
-        # last global model
-        last_global_model = copy.deepcopy(self.model)
-        
-        for iter in range(int(self.args.local_epochs)):
-            for batch_idx, batch_data in enumerate(self.dataloader):
-                if self.args.dataset == 'extrasensory' and batch_idx > 20: continue
-                self.model.zero_grad()
-                optimizer.zero_grad()
-                if self.args.modality == "multimodal":
-                    x_a, x_b, l_a, l_b, y = batch_data
-                    x_a, x_b, y = x_a.to(self.device), x_b.to(self.device), y.to(self.device)
-                    l_a, l_b = l_a.to(self.device), l_b.to(self.device)
-                    
-                    # forward
-                    outputs, _ = self.model(
-                        x_a.float(), x_b.float(), l_a, l_b
-                    )
-                else:
-                    x, l, y = batch_data
-                    x, l, y = x.to(self.device), l.to(self.device), y.to(self.device)
-                    
-                    # forward
-                    outputs, _ = self.model(
-                        x.float(), l
-                    )
-                
-                if not self.multilabel: 
-                    outputs = torch.log_softmax(outputs, dim=1)
-                    
-                # backward
-                loss = self.criterion(outputs, y)
-
-                # backward
-                loss.backward()
-                
-                # clip gradients
-                torch.nn.utils.clip_grad_norm_(
-                    self.model.parameters(), 
-                    10.0
-                )
-                optimizer.step()
-                
-                # save results
-                if not self.multilabel: 
-                    self.eval.append_classification_results(
-                        y, 
-                        outputs, 
-                        loss
-                    )
-                else:
-                    self.eval.append_multilabel_results(
-                        y, 
-                        outputs, 
-                        loss
-                    )
-                
-        # epoch train results
-        if not self.multilabel:
-            self.result = self.eval.classification_summary()
         else:
-            self.result = self.eval.multilabel_summary()
+            optimizer = FedProxOptimizer(
+                self.model.parameters(),
+                lr=self.args.learning_rate,
+                momentum=0.9,
+                weight_decay=1e-5,
+                mu=self.args.mu,
+            )
+
+        for _ in range(int(self.args.local_epochs)):
+            for audio, video, audio_lengths, video_lengths, labels in self.dataloader:
+                optimizer.zero_grad()
+                audio = audio.float().to(self.device)
+                video = video.float().to(self.device)
+                audio_lengths = audio_lengths.to(self.device)
+                video_lengths = video_lengths.to(self.device)
+                labels = labels.to(self.device)
+                outputs, _ = self.model(
+                    audio, video, audio_lengths, video_lengths
+                )
+                outputs = torch.log_softmax(outputs, dim=1)
+                loss = self.criterion(outputs, labels)
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 10.0)
+                optimizer.step()
+                evaluator.append_classification_results(labels, outputs, loss)
+        self.result = evaluator.classification_summary()

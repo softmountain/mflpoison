@@ -2,7 +2,10 @@
 import argparse
 import sys
 
-from _dispatch import EVAL_SCRIPTS, dispatch
+try:
+    from ._dispatch import EVAL_SCRIPTS, dispatch
+except ImportError:  # Direct script execution.
+    from _dispatch import EVAL_SCRIPTS, dispatch
 
 
 def main():

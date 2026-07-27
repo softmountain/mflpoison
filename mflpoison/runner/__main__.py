@@ -5,7 +5,7 @@ from typing import Optional, Sequence
 
 from mflpoison.core.config import load_scenario_config
 
-from .scenario import build_default_runner
+from .builder import build_default_runner
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:

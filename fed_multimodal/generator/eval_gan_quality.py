@@ -19,7 +19,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.use('Agg')  # 服务器端非交互式后端
-import seaborn as sns
 from sklearn.manifold import TSNE
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.decomposition import PCA
@@ -619,7 +618,7 @@ def main():
                         help='Path to GAN checkpoint')
     parser.add_argument('--data_dir', type=str, default=None,
                         help='Data directory')
-    parser.add_argument('--dataset', type=str, default='ucf101')
+    parser.add_argument('--dataset', type=str, default='ucf101', choices=['ucf101'])
     parser.add_argument('--alpha', type=float, default=5.0)
     parser.add_argument('--audio_feat', type=str, default='mfcc')
     parser.add_argument('--video_feat', type=str, default='mobilenet_v2')

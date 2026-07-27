@@ -42,10 +42,19 @@ pip install -r requirements.txt
 pip install -e .
 ```
 
+旧特征提取和 checkpoint 分析工具按需安装：
+
+```bash
+pip install -e ".[legacy-features,analysis]"
+```
+
+`requirements/lock-py39-cu117.txt` 记录当前 `poigan` 实验环境的完整
+Python 3.9 / CUDA 11.7 版本快照，不会作为普通安装的隐式依赖。
+
 验证：
 
 ```bash
-conda run -n poigan python -c "import torch, mflpoison; print(torch.__version__)"
+conda run -n poigan python -c "import torch, fed_multimodal, mflpoison; print(torch.__version__)"
 conda run -n poigan pytest -q
 ```
 
@@ -96,7 +105,8 @@ python experiments/run_scenario.py \
 python experiments/evaluate_generator.py \
   --generator dtm --checkpoint path/to/checkpoint.pt -- \
   --model_path path/to/teacher.pt \
-  --dataset_dir /path/to/ucf101 --num_batches 20
+  --data_dir fed_multimodal/results --alpha 1.0 --fold 1 \
+  --partition test --num_batches 20
 
 python experiments/generate_synthetic.py \
   --generator dtm --checkpoint path/to/checkpoint.pt \
@@ -104,10 +114,18 @@ python experiments/generate_synthetic.py \
 
 python experiments/evaluate_tstr.py \
   --synthetic_data artifacts/manual/synthetic.pt -- \
-  --dataset_dir /path/to/ucf101 --num_epochs 100
+  --data_dir fed_multimodal/results --alpha 1.0 --fold 1 \
+  --num_epochs 100
 ```
 
-`experiments/train_generator.py`、`fed_multimodal/Local/train_dtm_poison_gan.py` 和 `train_temporal_adaptive_gan.py` 只是统一 runner 的兼容别名，不再提供集中式 `full_train` 训练。
+旧 evaluator 默认分析 FedMM `test`。若要分析训练侧质量，必须显式使用
+`--partition client --client-id <ID>`；旧 `--use_train` 仅作为弃用别名保留，
+同样要求 `--client-id`。TSTR 固定使用同一 fold/alpha 的 FedMM `dev` 选模，
+模型确定后只评估一次 `test`，不再从集中训练集随机切出 validation。
+K+1/DTM/temporal 分析使用带时间戳的 JSON 文件，`meta` 会记录实际
+partition、client、alpha、fold、seed 和 teacher checkpoint，重复运行不会覆盖。
+
+`experiments/train_generator.py`、`fed_multimodal/Local/train_dtm_poison_gan.py` 和 `train_temporal_adaptive_gan.py` 只是统一 runner 的兼容别名，不再提供集中式 `full_train` 训练。旧 `Local/eval_*.py` 与 `Local/train_synthetic.py` 也仅为小写 `fed_multimodal.legacy_evaluation` 实现的薄 wrapper。
 
 ## 项目边界
 

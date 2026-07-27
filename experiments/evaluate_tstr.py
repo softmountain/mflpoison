@@ -2,7 +2,10 @@
 import argparse
 import sys
 
-from _dispatch import dispatch
+try:
+    from ._dispatch import dispatch
+except ImportError:  # Direct script execution.
+    from _dispatch import dispatch
 
 
 def main():
@@ -12,7 +15,7 @@ def main():
     if forwarded and forwarded[0] == "--":
         forwarded = forwarded[1:]
     return dispatch(
-        "fed_multimodal/Local/train_synthetic.py",
+        "fed_multimodal.legacy_evaluation.tstr",
         ["--synthetic_data", args.synthetic_data] + forwarded,
     )
 

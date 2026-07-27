@@ -67,6 +67,8 @@ class FedAvgCoordinator:
         self.model_spec = model_spec
         self.partition_hash = str(partition_hash)
         if defense_pipeline is None:
+            # Lazy import keeps the coordinator usable without importing all
+            # detector and FedMM compatibility modules at package load time.
             from mflpoison.defenses import DefensePipeline
 
             defense_pipeline = DefensePipeline(
