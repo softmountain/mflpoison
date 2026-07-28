@@ -30,6 +30,10 @@ class _Bundle:
     dataloader: float
     clean_num_samples: int
     partition_hash: str
+    malicious: bool = False
+    attack_active: bool = False
+    poison_sample_count: int = 0
+    generator_artifact_id: str = None
 
 
 class _Adapter:
@@ -113,7 +117,14 @@ class _AttackStrategy:
         self.calls.append(
             (bundle.client_id, artifact.content_hash, snapshot.content_hash, round_index)
         )
-        return replace(bundle, dataloader=10.0)
+        return replace(
+            bundle,
+            dataloader=10.0,
+            malicious=True,
+            attack_active=True,
+            poison_sample_count=1,
+            generator_artifact_id=artifact.content_hash,
+        )
 
 
 class _MagnitudeDetector:
@@ -351,10 +362,35 @@ class ScenarioRunnerTest(unittest.TestCase):
                 summary["branches"]["attack"]["clean_utility_drop"], -6.0
             )
             self.assertEqual(
+                summary["branches"]["attack"]["delta_asr_percentage_points"],
+                100.0,
+            )
+            self.assertEqual(
+                summary["branches"]["attack"]["attack_exposure"],
+                {
+                    "active_poisoned_updates": 2,
+                    "malicious_client_seats": 2,
+                    "rounds_with_active_poison": 2,
+                    "rounds_with_malicious_clients": 2,
+                    "total_client_seats": 6,
+                    "total_poison_samples": 2,
+                    "total_rounds": 2,
+                },
+            )
+            self.assertNotIn(
+                "targeted_attack_screen", summary["branches"]["attack"]
+            )
+            self.assertEqual(
                 summary["branch_schedule"],
                 [list(row) for row in result.branch_schedule],
             )
             self.assertTrue((root / "manifest.json").is_file())
+            manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest["schema_version"], 2)
+            self.assertIn("git_status_short", manifest)
+            self.assertIn("torch_cuda_version", manifest["runtime"])
+            self.assertIn("gpu_devices", manifest["runtime"])
+            self.assertIn("argv", manifest["runtime"])
             self.assertTrue((root / "snapshots" / "m_star.pt").is_file())
             self.assertTrue((root / "round_records.pt").is_file())
             self.assertTrue(
@@ -412,11 +448,103 @@ class ScenarioRunnerTest(unittest.TestCase):
             self.assertEqual(
                 len(resumed.pretraining.records), len(baseline.pretraining.records)
             )
-            for name in ScenarioRunner.BRANCHES:
+            for name in baseline.branches:
                 self.assertEqual(
                     resumed.branches[name].final_snapshot.content_hash,
                     baseline.branches[name].final_snapshot.content_hash,
                 )
+
+    def test_branch_selection_skips_defended_when_defense_is_disabled(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            payload = _config(root).to_dict()
+            payload["federation"]["branches"] = ("clean", "attack")
+            payload["defense"]["enabled"] = False
+            adapter = _Adapter()
+
+            def manager_factory(phase):
+                def trainer_factory(client_id):
+                    def train(request, partition):
+                        del partition
+                        checkpoint = root / (
+                            f"{phase}-{client_id}-{request.refresh_index}.pt"
+                        )
+                        checkpoint.write_bytes(
+                            f"{phase}:{client_id}:{request.refresh_index}".encode(
+                                "ascii"
+                            )
+                        )
+                        return request.artifact(
+                            str(checkpoint), file_sha256(checkpoint)
+                        )
+
+                    return CallbackGeneratorTrainer(train)
+
+                return GeneratorLifecycleManager(
+                    trainer_factory=trainer_factory,
+                    variant="dtm",
+                    mode="online_refresh",
+                    refresh_every=1,
+                    seed=9,
+                )
+
+            result = ScenarioRunner(
+                ScenarioConfig.from_mapping(payload),
+                adapter=adapter,
+                client_trainer=_ClientTrainer(),
+                aggregator=WeightedMean(),
+                initial_state={"weight": torch.tensor([0.0])},
+                generator_lifecycle_factory=manager_factory,
+                attack_strategy=_AttackStrategy(),
+            ).run()
+            self.assertEqual(tuple(result.branches), ("clean", "attack"))
+            self.assertNotIn("defended", result.branches)
+            summary = json.loads(result.summary_path.read_text(encoding="utf-8"))
+            self.assertEqual(summary["selected_branches"], ["clean", "attack"])
+
+    def test_reuses_content_hashed_m_star_without_repeating_pretraining(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+
+            def clean_config(artifact_root):
+                payload = _config(artifact_root).to_dict()
+                payload["generator"]["enabled"] = False
+                payload["attack"].update(
+                    enabled=False,
+                    malicious_clients=(),
+                    malicious_client_count=0,
+                )
+                payload["defense"]["enabled"] = False
+                return payload
+
+            baseline_payload = clean_config(root / "baseline")
+            baseline = ScenarioRunner(
+                ScenarioConfig.from_mapping(baseline_payload),
+                adapter=_Adapter(),
+                client_trainer=_ClientTrainer(),
+                aggregator=WeightedMean(),
+                initial_state={"weight": torch.tensor([0.0])},
+            ).run()
+            source_path = baseline.artifact_root / "snapshots" / "m_star.pt"
+
+            reused_payload = clean_config(root / "reused")
+            reused_payload["federation"]["m_star_path"] = str(source_path)
+            reused_payload["federation"][
+                "m_star_snapshot_hash"
+            ] = baseline.m_star.content_hash
+            reused = ScenarioRunner(
+                ScenarioConfig.from_mapping(reused_payload),
+                adapter=_Adapter(),
+                client_trainer=_ClientTrainer(),
+                aggregator=WeightedMean(),
+                initial_state={"weight": torch.tensor([0.0])},
+            ).run()
+
+            self.assertEqual(reused.m_star.content_hash, baseline.m_star.content_hash)
+            self.assertEqual(reused.pretraining.records, [])
+            summary = json.loads(reused.summary_path.read_text(encoding="utf-8"))
+            self.assertTrue(summary["m_star"]["reused"])
+            self.assertEqual(summary["m_star"]["source_path"], str(source_path))
 
     def test_resume_rejects_tampered_runtime_payload(self):
         with tempfile.TemporaryDirectory() as directory:

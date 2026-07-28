@@ -192,30 +192,45 @@ class GenerativeFeaturePoisoningStrategy:
             round_index=round_index,
             lengths=lengths,
         )
-        if not view.active:
-            return clean_bundle
-        num_workers = int(clean_loader.num_workers)
-        loader_generator = torch.Generator()
-        loader_generator.manual_seed(self.seed + int(round_index))
-        loader = DataLoader(
-            view.dataset,
-            batch_size=clean_loader.batch_size,
-            shuffle=True,
-            num_workers=num_workers,
-            collate_fn=clean_loader.collate_fn,
-            pin_memory=clean_loader.pin_memory,
-            drop_last=clean_loader.drop_last,
-            worker_init_fn=clean_loader.worker_init_fn,
-            persistent_workers=(
-                num_workers > 0
-                and getattr(clean_loader, "persistent_workers", False)
-            ),
-            generator=loader_generator,
-        )
+        loader = clean_loader
+        if view.active:
+            num_workers = int(clean_loader.num_workers)
+            loader_generator = torch.Generator()
+            loader_generator.manual_seed(self.seed + int(round_index))
+            loader = DataLoader(
+                view.dataset,
+                batch_size=clean_loader.batch_size,
+                shuffle=True,
+                num_workers=num_workers,
+                collate_fn=clean_loader.collate_fn,
+                pin_memory=clean_loader.pin_memory,
+                drop_last=clean_loader.drop_last,
+                worker_init_fn=clean_loader.worker_init_fn,
+                persistent_workers=(
+                    num_workers > 0
+                    and getattr(clean_loader, "persistent_workers", False)
+                ),
+                generator=loader_generator,
+            )
         if hasattr(clean_bundle, "dataloader"):
-            from dataclasses import replace
+            from dataclasses import fields, replace
 
-            return replace(clean_bundle, dataloader=loader)
+            supported = {item.name for item in fields(clean_bundle)}
+            values = {"dataloader": loader}
+            provenance = {
+                "malicious": True,
+                "attack_active": view.active,
+                "poison_sample_count": view.poison_sample_count,
+                "generator_artifact_id": getattr(
+                    backend_or_artifact, "content_hash", None
+                ),
+            }
+            values.update(
+                (name, value)
+                for name, value in provenance.items()
+                if name in supported
+            )
+            return replace(clean_bundle, **values)
         return loader
 
     def _resolve_budget(self, clean_count: int) -> int:

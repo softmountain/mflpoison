@@ -3,7 +3,10 @@ import unittest
 import torch
 
 from fed_multimodal.poison_gan.metrics import classification_metrics
-from mflpoison.evaluation import kplus1_classification_metrics
+from mflpoison.evaluation import (
+    kplus1_classification_metrics,
+    targeted_classification_metrics,
+)
 
 
 class MetricsTest(unittest.TestCase):
@@ -19,6 +22,31 @@ class MetricsTest(unittest.TestCase):
 
         explicit = kplus1_classification_metrics(logits, targets, 2, 2)
         self.assertAlmostEqual(explicit["joint_target_escape_rate"], 0.5)
+
+    def test_targeted_classification_metrics_report_direction_and_utility(self):
+        metrics = targeted_classification_metrics(
+            [0, 0, 1, 1, 2, 2],
+            [1, 0, 1, 0, 1, 2],
+            victim_class=0,
+            goal_class=1,
+        )
+        self.assertEqual(metrics["attack_source_sample_count"], 2.0)
+        self.assertAlmostEqual(metrics["attack_success_rate"], 0.5)
+        self.assertAlmostEqual(metrics["attack_success_rate_pct"], 50.0)
+        self.assertAlmostEqual(metrics["source_class_accuracy"], 50.0)
+        self.assertAlmostEqual(metrics["source_class_recall"], 50.0)
+        self.assertAlmostEqual(metrics["goal_class_false_positive_rate"], 50.0)
+        self.assertAlmostEqual(metrics["non_source_accuracy"], 50.0)
+        self.assertAlmostEqual(metrics["non_source_macro_f1"], 58.3333333333)
+
+    def test_targeted_classification_metrics_reject_mismatched_inputs(self):
+        with self.assertRaisesRegex(ValueError, "equal length"):
+            targeted_classification_metrics(
+                [0, 1],
+                [1],
+                victim_class=0,
+                goal_class=1,
+            )
 
 
 if __name__ == "__main__":

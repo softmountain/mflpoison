@@ -3,7 +3,12 @@ from typing import Callable, Dict, Iterable, List, Mapping, Optional, Sequence
 
 import torch
 
-from mflpoison.core.types import AggregationResult, GlobalSnapshot, RoundRecord
+from mflpoison.core.types import (
+    AggregationResult,
+    ClientUpdate,
+    GlobalSnapshot,
+    RoundRecord,
+)
 
 
 @dataclass
@@ -113,12 +118,31 @@ class FedAvgCoordinator:
             artifacts = [] if artifact_resolver is None else list(
                 artifact_resolver(str(client_id))
             )
+            generator_artifact_id = getattr(
+                bundle, "generator_artifact_id", None
+            )
+            if generator_artifact_id is not None:
+                generator_artifact_id = str(generator_artifact_id)
+                if artifacts and generator_artifact_id not in artifacts:
+                    raise ValueError(
+                        "client bundle and artifact resolver disagree for "
+                        + str(client_id)
+                    )
+                if not artifacts:
+                    artifacts.append(generator_artifact_id)
             update = self.client_trainer.train(
                 client_id=str(client_id),
                 snapshot=client_snapshot,
                 dataloader=bundle.dataloader,
                 clean_num_samples=bundle.clean_num_samples,
                 artifact_ids=artifacts,
+            )
+            if not isinstance(update, ClientUpdate):
+                raise TypeError("client trainer must return ClientUpdate")
+            update.record_attack_provenance(
+                malicious=bool(getattr(bundle, "malicious", False)),
+                attack_active=bool(getattr(bundle, "attack_active", False)),
+                poison_sample_count=int(getattr(bundle, "poison_sample_count", 0)),
             )
             if client_snapshot.calculate_hash() != client_snapshot.content_hash:
                 raise RuntimeError(

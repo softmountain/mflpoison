@@ -4,9 +4,9 @@ dataset:
   split: "1"
   fold: 1
   alpha: 1.0
-  num_clients: 10
+  num_clients: null
   partition_path: null
-  partition_id: fold1-alpha1-smoke
+  partition_id: fold1-alpha1
   partition_hash: null
   num_classes: 51
   modality_shapes:
@@ -26,20 +26,20 @@ model:
   options: {}
 
 federation:
-  rounds: 1
-  pretrain_rounds: 1
-  attack_rounds: 1
-  clients_per_round: 10
+  rounds: 50
+  pretrain_rounds: 50
+  attack_rounds: 20
+  clients_per_round: 5
   local_epochs: 1
-  batch_size: 64
+  batch_size: 16
   learning_rate: 0.05
   seed: 42
   convergence_metric: acc
   convergence_mode: max
-  patience: 1
+  patience: 10
   min_delta: 0.0
   resume_from: null
-  branches: [clean, attack, defended]
+  branches: [clean, attack]
   options:
     device: cuda
     mu: 0.0
@@ -50,7 +50,7 @@ generator:
   variant: dtm
   lifecycle: offline_once
   refresh_interval: 5
-  epochs: 1
+  epochs: 5
   batch_size: 16
   learning_rate: 0.0002
   seed: 42
@@ -59,8 +59,8 @@ generator:
     lambda_distribution: 1.0
     lambda_diversity: 0.2
   options:
-    max_batches: 1
-    log_interval: 1
+    max_batches: null
+    log_interval: 20
 
 attack:
   enabled: true
@@ -81,7 +81,7 @@ attack:
     generation_batch_size: 64
 
 defense:
-  enabled: true
+  enabled: false
   detectors:
     - name: norm_mad
       threshold: 3.5
@@ -104,7 +104,7 @@ evaluation:
   options: {}
 
 artifacts:
-  root_dir: artifacts/ucf101_generative_poison_defense_smoke
+  root_dir: artifacts/ucf101_poison_direction_0_to_1_b0_seed42
   save_every_round: true
   manifest_name: manifest.json
   snapshot_name: global_snapshot.pt

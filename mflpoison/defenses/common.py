@@ -121,6 +121,10 @@ def replace_update(
             else dict(getattr(update, "metrics", {}) or {})
         ),
         "malicious": bool(getattr(update, "malicious", False)),
+        "attack_active": bool(getattr(update, "attack_active", False)),
+        "poison_sample_count": int(
+            getattr(update, "poison_sample_count", 0)
+        ),
         "artifact_ids": list(getattr(update, "artifact_ids", []) or []),
     }
     if "delta" in parameters:

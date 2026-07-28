@@ -8,6 +8,9 @@ import yaml
 from mflpoison.core.config import ScenarioConfig, load_scenario_config
 
 
+ROOT = Path(__file__).resolve().parents[1]
+
+
 def valid_config():
     return {
         "dataset": {
@@ -105,6 +108,71 @@ class ScenarioConfigTest(unittest.TestCase):
         self.assertEqual(loaded.federation.effective_pretrain_rounds, 20)
         self.assertEqual(loaded.federation.attack_rounds, 5)
         self.assertEqual(loaded.federation.convergence_metric, "acc")
+
+    def test_branch_selection_defaults_and_validation(self):
+        config = valid_config()
+        config["defense"]["enabled"] = False
+        loaded = ScenarioConfig.from_mapping(config)
+        self.assertEqual(loaded.selected_branches, ("clean", "attack"))
+
+        config["federation"]["branches"] = ["clean"]
+        loaded = ScenarioConfig.from_mapping(config)
+        self.assertEqual(loaded.selected_branches, ("clean",))
+
+        config["federation"]["branches"] = ["clean", "defended"]
+        loaded = ScenarioConfig.from_mapping(config)
+        with self.assertRaisesRegex(ValueError, "defense.enabled"):
+            _ = loaded.selected_branches
+
+        config["federation"]["branches"] = ["clean", "unknown"]
+        with self.assertRaisesRegex(ValueError, "unsupported branch"):
+            ScenarioConfig.from_mapping(config)
+
+    def test_reused_m_star_requires_path_and_content_hash_together(self):
+        config = valid_config()
+        config["federation"]["m_star_path"] = "artifacts/base/m_star.pt"
+        with self.assertRaisesRegex(ValueError, "must be set together"):
+            ScenarioConfig.from_mapping(config)
+
+        config["federation"]["m_star_snapshot_hash"] = "snapshot-hash"
+        loaded = ScenarioConfig.from_mapping(config)
+        self.assertEqual(
+            loaded.federation.m_star_path,
+            "artifacts/base/m_star.pt",
+        )
+        self.assertEqual(
+            loaded.federation.m_star_snapshot_hash,
+            "snapshot-hash",
+        )
+
+    def test_production_configs_use_correct_zero_to_one_direction(self):
+        expected = (
+            (
+                "ucf101_generative_poison_defense.yaml",
+                ("clean", "attack", "defended"),
+                True,
+            ),
+            (
+                "ucf101_generative_poison_defense_smoke.yaml",
+                ("clean", "attack", "defended"),
+                True,
+            ),
+            (
+                "ucf101_generative_poison_attack.yaml",
+                ("clean", "attack"),
+                False,
+            ),
+        )
+        for name, branches, defense_enabled in expected:
+            with self.subTest(name=name):
+                config = load_scenario_config(ROOT / "configs" / "scenarios" / name)
+                self.assertEqual(config.selected_branches, branches)
+                self.assertEqual(config.defense.enabled, defense_enabled)
+                self.assertEqual(config.attack.condition_class, 0)
+                self.assertEqual(config.attack.assigned_train_label, 1)
+                self.assertEqual(config.attack.victim_eval_class, 0)
+                self.assertEqual(config.attack.goal_prediction_class, 1)
+                self.assertEqual(config.attack.malicious_clients, ("1",))
 
 
 if __name__ == "__main__":

@@ -333,6 +333,8 @@ class ClientUpdate:
     metrics: Dict[str, float]
     artifact_ids: Tuple[str, ...]
     malicious: bool
+    attack_active: bool
+    poison_sample_count: int
     _legacy_state: Optional[Dict[str, torch.Tensor]]
     _legacy_only: bool
 
@@ -348,6 +350,8 @@ class ClientUpdate:
         metrics: Optional[Mapping[str, float]] = None,
         artifact_ids: Sequence[str] = (),
         malicious: bool = False,
+        attack_active: bool = False,
+        poison_sample_count: int = 0,
         state: Optional[TensorMap] = None,
         num_samples: Optional[int] = None,
     ):
@@ -403,7 +407,38 @@ class ClientUpdate:
         self.artifact_ids = tuple(str(item) for item in artifact_ids)
         if any(not item for item in self.artifact_ids):
             raise ValueError("artifact_ids cannot contain empty strings")
+        self.record_attack_provenance(
+            malicious=malicious,
+            attack_active=attack_active,
+            poison_sample_count=poison_sample_count,
+        )
+
+    def record_attack_provenance(
+        self,
+        *,
+        malicious: bool,
+        attack_active: bool,
+        poison_sample_count: int,
+    ) -> "ClientUpdate":
         self.malicious = bool(malicious)
+        self.attack_active = bool(attack_active)
+        self.poison_sample_count = int(poison_sample_count)
+        if self.poison_sample_count < 0:
+            raise ValueError("poison_sample_count cannot be negative")
+        if self.poison_sample_count > self.train_num_samples:
+            raise ValueError("poison_sample_count cannot exceed train_num_samples")
+        if self.attack_active and not self.malicious:
+            raise ValueError("an active attack update must be malicious")
+        if self.attack_active != (self.poison_sample_count > 0):
+            raise ValueError(
+                "attack_active must match whether poison samples were trained"
+            )
+        return self
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self.__dict__.setdefault("attack_active", False)
+        self.__dict__.setdefault("poison_sample_count", 0)
 
     @property
     def state(self) -> Mapping[str, torch.Tensor]:

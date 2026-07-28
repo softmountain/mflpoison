@@ -39,6 +39,7 @@ federation:
   patience: 10
   min_delta: 0.0
   resume_from: null
+  branches: [clean, attack, defended]
   options:
     device: cuda
     mu: 0.0
@@ -64,15 +65,15 @@ generator:
 attack:
   enabled: true
   strategy: generative_feature_poisoning
-  malicious_clients: []
+  malicious_clients: ["1"]
   malicious_client_count: 1
   poison_ratio: 0.2
   poison_count: null
   injection_mode: replace
   condition_class: 0
   assigned_train_label: 1
-  victim_eval_class: 1
-  goal_prediction_class: 0
+  victim_eval_class: 0
+  goal_prediction_class: 1
   start_round: 0
   end_round: null
   every: 1

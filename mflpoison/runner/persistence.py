@@ -98,7 +98,7 @@ class ScenarioArtifactStore:
         branches: Mapping[str, Any],
     ) -> Path:
         payload = {
-            "schema_version": 1,
+            "schema_version": 2,
             "config_hash": self.config_hash,
             "initial_snapshot_hash": initial_snapshot.content_hash,
             "m_star": {
@@ -107,8 +107,11 @@ class ScenarioArtifactStore:
                 "dev_metrics": dict(m_star.dev_metrics),
                 "test_metrics": dict(m_star_test),
                 "stopped_early": pretraining.stopped_early,
+                "reused": self.config.federation.m_star_path is not None,
+                "source_path": self.config.federation.m_star_path,
             },
             "malicious_clients": list(malicious_clients),
+            "selected_branches": list(branches),
             "pretrain_schedule": [list(row) for row in pretrain_schedule],
             "branch_schedule": [list(row) for row in branch_schedule],
             "branches": {
@@ -121,18 +124,105 @@ class ScenarioArtifactStore:
                         client_id: artifact.content_hash
                         for client_id, artifact in result.generator_artifacts.items()
                     },
+                    "generator_checkpoint_hashes": {
+                        client_id: artifact.checkpoint_hash
+                        for client_id, artifact in result.generator_artifacts.items()
+                    },
                     "detection_metrics": dict(result.detection_metrics),
                 }
                 for name, result in branches.items()
             },
         }
-        clean_metrics = branches["clean"].test_metrics
         for name in ("attack", "defended"):
-            branch_metrics = branches[name].test_metrics
-            for metric_name in ("acc", "accuracy"):
-                if metric_name in clean_metrics and metric_name in branch_metrics:
-                    payload["branches"][name]["clean_utility_drop"] = float(
-                        clean_metrics[metric_name] - branch_metrics[metric_name]
+            if name in branches:
+                payload["branches"][name]["attack_exposure"] = (
+                    self._attack_exposure(
+                        branches[name].training.records,
                     )
-                    break
+                )
+
+        clean_result = branches.get("clean")
+        if clean_result is not None:
+            clean_metrics = clean_result.test_metrics
+            for name, result in branches.items():
+                if name == "clean":
+                    continue
+                branch_metrics = result.test_metrics
+                utility_drops = {}
+                for metric_name in (
+                    "acc",
+                    "accuracy",
+                    "uar",
+                    "f1",
+                    "source_class_accuracy",
+                    "source_class_recall",
+                    "non_source_accuracy",
+                    "non_source_macro_f1",
+                ):
+                    if metric_name in clean_metrics and metric_name in branch_metrics:
+                        utility_drops[metric_name] = float(
+                            clean_metrics[metric_name] - branch_metrics[metric_name]
+                        )
+                payload["branches"][name]["clean_utility_drops"] = utility_drops
+                for metric_name in ("acc", "accuracy"):
+                    if metric_name in utility_drops:
+                        payload["branches"][name]["clean_utility_drop"] = (
+                            utility_drops[metric_name]
+                        )
+                        break
+                if (
+                    "attack_success_rate" in clean_metrics
+                    and "attack_success_rate" in branch_metrics
+                ):
+                    delta_asr = float(
+                        branch_metrics["attack_success_rate"]
+                        - clean_metrics["attack_success_rate"]
+                    )
+                    payload["branches"][name][
+                        "delta_attack_success_rate"
+                    ] = delta_asr
+                    payload["branches"][name][
+                        "delta_asr_percentage_points"
+                    ] = delta_asr * 100.0
         return write_json(payload, self.artifact_root / "summary.json")
+
+    def _attack_exposure(
+        self,
+        records: Sequence[Any],
+    ) -> Mapping[str, Any]:
+        total_client_seats = 0
+        malicious_client_seats = 0
+        rounds_with_malicious_clients = 0
+        rounds_with_active_poison = 0
+        active_poisoned_updates = 0
+        total_poison_samples = 0
+        for record in records:
+            selected_malicious = [
+                update
+                for update in record.raw_updates
+                if bool(update.malicious)
+            ]
+            total_client_seats += len(record.selected_client_ids)
+            malicious_client_seats += len(selected_malicious)
+            if selected_malicious:
+                rounds_with_malicious_clients += 1
+            poisoned_updates = [
+                update
+                for update in selected_malicious
+                if bool(update.attack_active)
+            ]
+            active_poisoned_updates += len(poisoned_updates)
+            total_poison_samples += sum(
+                int(update.poison_sample_count) for update in poisoned_updates
+            )
+            if poisoned_updates:
+                rounds_with_active_poison += 1
+        return {
+            "total_rounds": len(records),
+            "total_client_seats": total_client_seats,
+            "rounds_with_malicious_clients": rounds_with_malicious_clients,
+            "malicious_client_seats": malicious_client_seats,
+            "rounds_with_active_poison": rounds_with_active_poison,
+            "active_poisoned_updates": active_poisoned_updates,
+            "total_poison_samples": total_poison_samples,
+        }

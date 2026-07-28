@@ -22,6 +22,10 @@ from mflpoison.federated import (
 class Bundle:
     dataloader: object
     clean_num_samples: int = 1
+    malicious: bool = False
+    attack_active: bool = False
+    poison_sample_count: int = 0
+    generator_artifact_id: str = None
 
 
 class FakeTrainer:
@@ -124,6 +128,34 @@ class FederatedCoordinatorTest(unittest.TestCase):
         self.assertAlmostEqual(float(result.final_snapshot.state["weight"]), 4.0)
         self.assertEqual(len(result.records), 2)
         self.assertEqual(result.records[0].base_snapshot_hash, self.initial.content_hash)
+
+    def test_round_records_actual_attack_provenance_from_client_bundle(self):
+        coordinator = FedAvgCoordinator(
+            client_trainer=FakeTrainer(),
+            aggregator=WeightedMean(),
+            model_spec=self.spec,
+            partition_hash="partition",
+        )
+        bundle = Bundle(
+            1.0,
+            malicious=True,
+            attack_active=True,
+            poison_sample_count=1,
+            generator_artifact_id="generator-a",
+        )
+
+        _, updates, _, _ = coordinator.run_round(
+            self.initial,
+            ("a",),
+            lambda client_id, snapshot: bundle,
+            artifact_resolver=lambda client_id: ("generator-a",),
+        )
+
+        update = updates[0]
+        self.assertTrue(update.malicious)
+        self.assertTrue(update.attack_active)
+        self.assertEqual(update.poison_sample_count, 1)
+        self.assertEqual(update.artifact_ids, ("generator-a",))
 
     def test_rejecting_every_update_keeps_the_global_state(self):
         coordinator = FedAvgCoordinator(

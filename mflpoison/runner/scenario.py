@@ -9,13 +9,14 @@ import torch
 
 from mflpoison.artifacts import (
     build_manifest,
+    load_snapshot,
     save_snapshot,
     write_manifest,
 )
 from mflpoison.attacks import select_malicious_clients
 from mflpoison.core.config import ScenarioConfig
 from mflpoison.core.types import GeneratorArtifact, GlobalSnapshot, ModelSpec
-from mflpoison.evaluation import detection_metrics
+from mflpoison.evaluation import detection_metrics, targeted_classification_metrics
 from mflpoison.federated import (
     ConvergencePolicy,
     FedAvgCoordinator,
@@ -175,7 +176,12 @@ class ScenarioRunner:
             clients_per_round,
             self.config.federation.seed + 1,
         )
-        malicious_clients = self._resolve_malicious_clients(client_ids)
+        selected_branches = self.config.selected_branches
+        malicious_clients = (
+            self._resolve_malicious_clients(client_ids)
+            if any(name != "clean" for name in selected_branches)
+            else ()
+        )
         resume_state = self._load_resume_state()
         if resume_state is not None:
             saved_initial = resume_state.get("initial_snapshot")
@@ -187,6 +193,7 @@ class ScenarioRunner:
                 "pretrain_schedule": pretrain_schedule,
                 "branch_schedule": branch_schedule,
                 "malicious_clients": malicious_clients,
+                "selected_branches": selected_branches,
             }
             for name, expected in expected_resume_values.items():
                 if resume_state.get(name) != expected:
@@ -200,6 +207,7 @@ class ScenarioRunner:
                 pretrain_schedule=pretrain_schedule,
                 branch_schedule=branch_schedule,
                 malicious_clients=malicious_clients,
+                selected_branches=selected_branches,
                 **values,
             )
 
@@ -215,6 +223,15 @@ class ScenarioRunner:
                 "malicious_clients": list(malicious_clients),
                 "pretrain_schedule": [list(row) for row in pretrain_schedule],
                 "branch_schedule": [list(row) for row in branch_schedule],
+                "selected_branches": list(selected_branches),
+                "m_star_source": (
+                    None
+                    if self.config.federation.m_star_path is None
+                    else {
+                        "path": self.config.federation.m_star_path,
+                        "snapshot_hash": self.config.federation.m_star_snapshot_hash,
+                    }
+                ),
             },
         )
         write_manifest(manifest, self.artifact_root / self.config.artifacts.manifest_name)
@@ -240,7 +257,17 @@ class ScenarioRunner:
             return ()
 
         resume_phase = None if resume_state is None else str(resume_state.get("phase"))
-        if resume_state is not None and resume_phase != "pretrain":
+        configured_m_star = self._configured_m_star(partition_hash)
+        if configured_m_star is not None:
+            if resume_phase == "pretrain":
+                raise ValueError("a reused M* cannot resume an active pretrain phase")
+            pretraining = TrainingResult(
+                best_snapshot=configured_m_star,
+                final_snapshot=configured_m_star,
+                records=[],
+                stopped_early=False,
+            )
+        elif resume_state is not None and resume_phase != "pretrain":
             pretraining = resume_state["pretraining"]
         else:
             pretrain_progress = (
@@ -359,7 +386,7 @@ class ScenarioRunner:
             if resume_state is not None and resume_after_base
             else {}
         )
-        for branch_name in self.BRANCHES:
+        for branch_name in selected_branches:
             if branch_name in branches:
                 continue
             use_attack = branch_name != "clean" and bool(malicious_clients)
@@ -599,6 +626,21 @@ class ScenarioRunner:
             raise TypeError("adapter.build_model must return a torch model")
         return cpu_state(model.state_dict())
 
+    def _configured_m_star(self, partition_hash: str) -> Optional[GlobalSnapshot]:
+        configured_path = self.config.federation.m_star_path
+        if configured_path is None:
+            return None
+        snapshot = load_snapshot(configured_path)
+        expected_hash = str(self.config.federation.m_star_snapshot_hash)
+        if snapshot.content_hash != expected_hash:
+            raise ValueError("configured M* snapshot hash does not match its artifact")
+        if snapshot.partition_hash != str(partition_hash):
+            raise ValueError("configured M* belongs to a different data partition")
+        if snapshot.model_spec.to_dict() != self.model_spec.to_dict():
+            raise ValueError("configured M* model specification does not match the runner")
+        self._validate_model_state(snapshot.state)
+        return snapshot
+
     def _validate_adapter_contract(self, partition_hash: str) -> None:
         configured_hash = self.config.dataset.partition_hash
         if configured_hash and str(configured_hash) != partition_hash:
@@ -650,21 +692,19 @@ class ScenarioRunner:
         predictions = raw.get("pred") if isinstance(raw, Mapping) else None
         if (
             self.config.evaluation.evaluate_attack
-            and
-            victim_class is not None
+            and victim_class is not None
             and goal_class is not None
             and truth is not None
             and predictions is not None
         ):
-            selected = [
-                int(prediction)
-                for label, prediction in zip(truth, predictions)
-                if int(label) == int(victim_class)
-            ]
-            if selected:
-                metrics["attack_success_rate"] = sum(
-                    prediction == int(goal_class) for prediction in selected
-                ) / float(len(selected))
+            metrics.update(
+                targeted_classification_metrics(
+                    truth,
+                    predictions,
+                    victim_class=int(victim_class),
+                    goal_class=int(goal_class),
+                )
+            )
         return metrics
 
     @staticmethod

@@ -58,6 +58,9 @@ class CoreContractsTest(unittest.TestCase):
             clean_num_samples=8,
             train_num_samples=10,
             artifact_ids=("generator-7",),
+            malicious=True,
+            attack_active=True,
+            poison_sample_count=2,
         )
         decision = DefenseDecision(
             client_id="7",
@@ -268,7 +271,11 @@ class CoreContractsTest(unittest.TestCase):
             record = self._round_record()
             save_round_record(record, record_path)
             save_round_record_bundle({"pretrain": [record]}, bundle_path)
-            self.assertEqual(load_round_record(record_path).round_index, 4)
+            restored = load_round_record(record_path)
+            self.assertEqual(restored.round_index, 4)
+            self.assertTrue(restored.raw_updates[0].malicious)
+            self.assertTrue(restored.raw_updates[0].attack_active)
+            self.assertEqual(restored.raw_updates[0].poison_sample_count, 2)
             self.assertEqual(
                 load_round_record_bundle(bundle_path)["pretrain"][0].round_index,
                 4,

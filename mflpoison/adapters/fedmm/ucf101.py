@@ -63,6 +63,24 @@ class ClientDataBundle:
     dataloader: object
     clean_num_samples: int
     partition_hash: str
+    malicious: bool = False
+    attack_active: bool = False
+    poison_sample_count: int = 0
+    generator_artifact_id: Optional[str] = None
+
+    def __post_init__(self):
+        if int(self.poison_sample_count) < 0:
+            raise ValueError("poison_sample_count cannot be negative")
+        if bool(self.attack_active) != (int(self.poison_sample_count) > 0):
+            raise ValueError(
+                "attack_active must match whether poison samples are present"
+            )
+        if bool(self.attack_active) and not bool(self.malicious):
+            raise ValueError("an active poisoned bundle must be malicious")
+        if self.generator_artifact_id is not None and not str(
+            self.generator_artifact_id
+        ):
+            raise ValueError("generator_artifact_id cannot be empty")
 
     @property
     def dataset(self):

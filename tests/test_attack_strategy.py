@@ -1,4 +1,5 @@
 import unittest
+from types import SimpleNamespace
 
 import torch
 from torch.utils.data import DataLoader, Dataset
@@ -9,6 +10,7 @@ from mflpoison.attacks import (
     InjectionMode,
 )
 from mflpoison.core.types import SyntheticBatch
+from mflpoison.adapters.fedmm import ClientDataBundle
 from mflpoison.data import SyntheticFeatureDataset, canonical_synthetic_batch
 from mflpoison.data.synthetic_dataset import MixedPoisonDataset
 
@@ -181,6 +183,33 @@ class GenerativeFeaturePoisoningTest(unittest.TestCase):
         self.assertEqual(poisoned_loader.dataset.clean_count, 8)
         self.assertEqual(poisoned_loader.dataset.poison_count, 2)
         self.assertEqual(poisoned_loader.batch_size, 4)
+
+    def test_prepared_bundle_records_actual_poison_and_generator_provenance(self):
+        clean_loader = DataLoader(_CleanDataset(8), batch_size=4, shuffle=False)
+        bundle = ClientDataBundle("7", clean_loader, 8, "partition-7")
+        strategy = GenerativeFeaturePoisoningStrategy(
+            AttackSpec(
+                condition_class=4,
+                assigned_train_label=1,
+                victim_eval_class=4,
+                goal_prediction_class=1,
+                poison_count=2,
+            )
+        )
+
+        poisoned = strategy.prepare_dataloader(
+            bundle,
+            SimpleNamespace(
+                content_hash="generator-7",
+                generate=_GeneratorBackend().generate,
+            ),
+            round_index=0,
+        )
+
+        self.assertTrue(poisoned.malicious)
+        self.assertTrue(poisoned.attack_active)
+        self.assertEqual(poisoned.poison_sample_count, 2)
+        self.assertEqual(poisoned.generator_artifact_id, "generator-7")
 
     def test_replace_maps_each_selected_position_to_one_unique_poison(self):
         clean = torch.utils.data.TensorDataset(torch.arange(10))

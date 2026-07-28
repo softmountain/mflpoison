@@ -17,7 +17,7 @@ UCF101 FedMM 客户端特征
   -> clean FedAvg 预训练
   -> 仅由 dev 指标选择 M*
   -> 每个恶意客户端在自己的 partition 上训练生成器
-  -> clean / attack / defended 使用相同客户端采样计划
+  -> 配置选中的 clean / attack / defended 分支使用相同客户端采样计划
   -> 服务器 validate / detect / decide / sanitize / aggregate
   -> test、攻击成功率和检测指标汇总
 ```
@@ -28,7 +28,7 @@ UCF101 FedMM 客户端特征
 runner.__main__ -> builder -> ScenarioRunner -> FedAvgCoordinator
 ```
 
-`ScenarioRunner` 负责预训练、M*、每客户端生成器和三条分支；
+`ScenarioRunner` 负责预训练、M*、每客户端生成器和配置选中的分支；
 `FedAvgCoordinator` 负责真实的逐轮客户端训练、防御处理、聚合与 dev 评估。
 仓库中保留的 `mflpoison/federated/engine.py`、`attacks/schedule.py` 和
 `attacks/injector.py` 是兼容/测试接口，不在上述生产调用链中。
@@ -42,8 +42,10 @@ runner.__main__ -> builder -> ScenarioRunner -> FedAvgCoordinator
 - 联邦算法：FedAvg
 - 生成器：DTM，默认 `offline_once`
 - 中毒：生成式特征替换，比例 `0.2`
-- 防御：norm MAD + cosine MAD + norm clipping + weighted mean
-- 输出：`artifacts/ucf101_generative_poison_defense/`
+- 攻击方向：类 `0` 条件生成、按标签 `1` 训练，评估 `0→1`
+- 默认防御场景：运行 `clean`、`attack`、`defended`，服务器防御开启
+- 攻击筛选场景：`ucf101_generative_poison_attack.yaml` 只运行 `clean`、`attack`
+- 默认防御输出：`artifacts/ucf101_generative_poison_defense/`
 
 ## 安装
 
@@ -71,7 +73,7 @@ conda run -p /mnt/sda/mtzh/xp/envs/fedpoi-py39 \
 conda run -p /mnt/sda/mtzh/xp/envs/fedpoi-py39 pytest -q
 ```
 
-当前工作区已完成 `101` 项测试、真实 `alpha10/fold1` adapter smoke，以及一次
+当前工作区已完成 `120` 项测试、真实 `alpha10/fold1` adapter smoke，以及一次
 默认 50 轮预训练 + 三个 20 轮分支的完整 GPU 实验。完整运行状态和指标见结构报告。
 
 ## 输入数据
@@ -98,6 +100,30 @@ python experiments/run_scenario.py \
   --artifact-root artifacts/custom-run
 ```
 
+攻击强度筛选使用受约束的 sweep 计划。无 `--execute` 时只解析并打印计划，
+不会启动训练：
+
+```bash
+python experiments/run_sweep.py \
+  --plan configs/sweeps/ucf101_poison_strength.yaml \
+  --stage single_factor --experiment B0 --seed 42
+```
+
+本地审查并同步批准提交后，BJMU 正式执行还必须提供批准提交：
+
+```bash
+python experiments/run_sweep.py \
+  --plan configs/sweeps/ucf101_poison_strength.yaml \
+  --stage single_factor --experiment B0 --seed 42 \
+  --approved-commit <FULL_COMMIT> --execute
+```
+
+执行时 runner 强制要求当前 HEAD 等于批准提交且 tracked worktree/staging 干净。
+默认只接受一个 stage、一个 seed 和显式 experiment 集合；更大矩阵还需
+`--allow-full-matrix`。已完成目录会跳过，配置哈希一致的合法中断目录只能用
+`--resume` 继续，其他已存在目录拒绝。每组还会核对 M*、partition、客户端日程、
+clean 最终 snapshot 及相同客户端/epochs 的生成器 checkpoint。
+
 恢复训练时在场景配置中设置 `federation.resume_from`。恢复状态包含预训练/分支进度、采样计划、生成器 lifecycle 和可选 EWMA reputation。
 
 ## 结果
@@ -105,11 +131,12 @@ python experiments/run_scenario.py \
 统一流程运行后主要产生：
 
 - `manifest.json`：完整配置、随机种子、Git commit、数据划分和采样计划；
-- `snapshots/`：初始模型、M* 和 clean/attack/defended 最终模型；
+- `snapshots/`：初始模型、M* 和所选分支的最终模型；
 - `generator_checkpoints/` 与 `generators/`：每客户端生成器 checkpoint 和 lineage manifest；
 - `round_records/` 与 `round_records.pt`：逐轮客户端更新、防御决策和聚合审计；
 - `resume_state.pt`：可复现恢复状态；
-- `summary.json`：dev/test、攻击、检测和 clean utility drop 汇总。
+- `summary.json`：dev/test、0→1 ASR及计数、ΔASR、类级效用、恶意暴露、
+  生成器 checkpoint 哈希和 clean utility drop 汇总。
 
 仓库不会自动生成图表或主观分析报告；分析应以 `summary.json` 和 `round_records` 为依据。当前是否已经产生统一结果，以结构报告中的“当前实际状态”为准。
 

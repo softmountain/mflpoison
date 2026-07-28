@@ -11,11 +11,15 @@
 - 当前保留 48 个 UCF101 分区特征文件，约 1.8 GB，覆盖 `alpha10/fold1` 和 `alpha50/fold1` 的音频/视频客户端、dev、test。
 - 2026-07-23 对默认 `alpha10/fold1` 的 adapter 实测通过：10 个训练客户端、`dev/test` 完整，partition hash 为 `859e3a5fa58996c5d97ae3a64243bdebb95a2e5ad288126a4a5f527934abe744`。
 - 当前 runner、旧 generator evaluator 和 TSTR 都直接读取 FedMM `alpha/fold/{client,dev,test}.pkl`；不依赖集中式 `feature.pkl` 或官方 split metadata。
-- 当前工作区已通过 101 项自动化测试、真实 `alpha10/fold1` adapter smoke 和源码树外 wheel 安装验证。
+- 当前工作区已通过 120 项自动化测试、真实 `alpha10/fold1` adapter smoke 和源码树外 wheel 安装验证。
 - 旧 `fed_multimodal/Local/results`、`fed_multimodal/result`、旧日志、旧压缩包和缓存已删除，清理前约占 10 GB。
-- 2026-07-27 已在 RTX 4090 上完成默认场景：50 轮预训练、5 epoch DTM 和 clean/attack/defended 各 20 轮，总耗时 34 分 25 秒，峰值内存约 8.58 GiB，结果目录约 3.8 GB。
+- 2026-07-27 已在 RTX 4090 上完成当时默认场景：50 轮预训练、5 epoch DTM 和 clean/attack/defended 各 20 轮，总耗时 34 分 25 秒，峰值内存约 8.58 GiB，结果目录约 3.8 GB。该结果使用历史 `1→0` 评估方向，只能作为旧 artifact provenance，不能替代当前 `0→1` 配置的正式验证。
 - 本次 M* 位于第 46 轮，dev/test accuracy 为 92.12%/73.10%；clean、attack、defended test accuracy 分别为 74.85%、73.66%、73.20%。
 - victim class 1 到 goal class 0 的 targeted ASR 在 clean、attack、defended 分别为 21.88%、3.13%、21.88%；本次生成式攻击没有提高目标 ASR，不能据此宣称攻击有效。防御检测 precision/recall/AUROC 为 30.00%/33.33%/70.09%，也不能据此宣称防御有效。
+- 对同一批最终 snapshot 按当前正确的 `0→1` 方向重新计算后，clean、attack、
+  defended ASR 分别为 13.64%、36.36%、18.18%。因此“攻击没有提高 ASR”只适用于
+  当时错误的 `1→0` 口径，不能用于描述当前方向；这仍是旧 snapshot 的事后重算，
+  不是批准版本上的新正式实验。
 - 默认产物的 110 个 round records、resume state、5 个 snapshots 和 3 个 generator manifests/checkpoints 已完成反序列化与哈希/lineage 校验；三分支采样计划一致。
 - 本次实验在未提交工作区上运行；manifest 记录基线 commit `7a34cad`，但实际代码还包含随机初始模型播种和 generator checkpoint 绝对路径修复，解释或复现时必须保留这一差异。
 - `artifacts/legacy_reference/` 当前保留约 3.1 MB 的旧实验报告与图表作为只读参考，不属于上述统一 runner 结果。
@@ -39,7 +43,7 @@ flowchart TD
     Lifecycle --> Generator["FedMMGeneratorTrainer"]
     MStar --> Clean["clean branch"]
     MStar --> Attack["attack branch"]
-    MStar --> Defended["defended branch"]
+    MStar -. "仅在 branches 选择且 defense.enabled=true" .-> Defended["defended branch"]
     Attack --> Strategy["GenerativeFeaturePoisoningStrategy"]
     Defended --> Strategy
     Defended --> Pipeline
@@ -93,7 +97,9 @@ fedpoi/
 
 ### 3.2 `configs/`
 
-`configs/scenarios/ucf101_generative_poison_defense.yaml` 是唯一生产配置，严格包含：
+`configs/scenarios/ucf101_generative_poison_defense.yaml` 保留完整三分支防御场景；
+`configs/scenarios/ucf101_generative_poison_attack.yaml` 是 clean/attack 筛选专用场景，
+由 `configs/sweeps/ucf101_poison_strength.yaml` 引用。两者都严格包含：
 
 - `dataset`：特征根、fold、alpha、类别数和模态形状；
 - `model`：`MMActionClassifier` 构造信息和可选初始 checkpoint；
@@ -193,7 +199,7 @@ fedpoi/
 
 | 文件 | 作用 |
 |---|---|
-| `artifacts/manifest.py` | 写配置、seed、Git commit、Python/PyTorch/平台和 `cuda_available`、partition 及采样计划；不记录 CUDA 版本或 GPU 型号。 |
+| `artifacts/manifest.py` | 写配置、seed、Git commit/分支/工作区状态、完整 argv、Python/PyTorch/CUDA/cuDNN、GPU/驱动、partition 及采样计划。 |
 | `artifacts/snapshot.py` | 保存/加载带内容哈希的 `GlobalSnapshot`。 |
 | `artifacts/generator.py` | 保存/加载生成器 lineage JSON 并验证 checkpoint hash。 |
 | `artifacts/round_record.py` | 保存单轮记录和多阶段 bundle，加载时重新校验契约及内容哈希。 |
@@ -211,7 +217,7 @@ fedpoi/
 |---|---|
 | `__main__.py` | 解析 `--config`、`--artifact-root`，构建并运行场景。 |
 | `builder.py` | 严格校验跨 section 选项，构造 FedMM adapter、客户端 trainer、生成器 lifecycle、攻击和防御组件，并加载可选初始 checkpoint。 |
-| `scenario.py` | 只编排 clean pretrain、M*、每客户端生成器以及 clean/attack/defended 三分支；保留旧 builder import 的薄 wrapper。 |
+| `scenario.py` | 编排 clean pretrain、M*、每客户端生成器以及 `federation.branches` 选择的 clean/attack/defended 分支；保留旧 builder import 的薄 wrapper。 |
 | `resume.py` | 保存和恢复 versioned resume payload，并重新校验 snapshot、round record、generator artifact 和内容哈希。 |
 | `persistence.py` | 原子写入 summary，持久化逐轮记录 bundle 和 generator lineage，检查 checkpoint 文件哈希。 |
 | `runtime.py` | CPU state、有限标量指标、客户端轮次 seed 和 DataLoader/runtime 播种原语。 |
@@ -266,7 +272,7 @@ evaluator 仍要求显式提供原 K 类 teacher checkpoint。teacher-guided che
 | `test_attacks.py`、`test_attack_strategy.py` | 标签方向、预算、replace/append 和调度。 |
 | `test_defenses.py`、`test_defense_pipeline.py` | 检测器、裁剪、稳健聚合、决策和检测指标。 |
 | `test_metrics.py` | 分类评估指标。 |
-| `test_scenario_runner.py` | M*、三分支、artifact、summary、resume 和 dev/test 边界。 |
+| `test_scenario_runner.py` | M*、分支选择、artifact、summary、resume 和 dev/test 边界。 |
 | `test_runner_builder_validation.py` | 默认 builder、配置交叉约束和 wrapper。 |
 | `test_runner_runtime.py` | runtime seed、loader generator、CPU state 和有限标量规范化。 |
 | `test_packaging.py` | namespace package discovery，防止 wheel 再次遗漏 FedMM 兼容层。 |
@@ -314,9 +320,9 @@ fed_multimodal/results/feature/
 | clean 分支 | `attack_rounds` | coordinator | M*、clean data、branch schedule | clean records/final snapshot/test metrics | 与公共 schedule 不一致会由 resume 校验失败 |
 | attack 分支 | `attack` | attack strategy、synthetic dataset | M*、生成器、恶意客户端本地数据 | attack records/final snapshot/ASR | 预算、标签、调度或 artifact lineage 非法 |
 | defended 分支 | `defense` | validation、detectors、pipeline、aggregator | 与 attack 相同更新 | decisions、processed updates、final snapshot | 更新 schema、检测配置或聚合条件非法 |
-| 汇总 | `evaluation`、`artifacts` | runner persistence | 三分支结果 | manifest、summary、round bundle、resume | generator artifact 持久化时校验 checkpoint hash；summary 原子写入但不重复遍历全部 checkpoint |
+| 汇总 | `evaluation`、`artifacts` | runner persistence | 所选分支结果 | manifest、summary、round bundle、resume | generator artifact 持久化时校验 checkpoint hash；summary 原子写入但不重复遍历全部 checkpoint |
 
-三个分支从同一 M* 开始并使用完全相同的 branch schedule；差别只能来自攻击数据视图和服务器防御。
+所有被选分支从同一 M* 开始并使用完全相同的 branch schedule；差别只能来自攻击数据视图和服务器防御。`federation.branches` 未显式设置时，会依据 attack/defense 开关选择安全默认值；防御关闭时不会再隐式重复 defended。
 
 ## 6. 标准结果目录
 
@@ -352,7 +358,7 @@ artifacts/ucf101_generative_poison_defense/
 
 ### 6.1 `manifest.json`
 
-记录 schema version、experiment ID、12 字符 manifest config hash、完整配置、seed、Git commit、Python/PyTorch/平台和 `cuda_available`、partition hash、客户端列表、恶意客户端、pretrain schedule、branch schedule，以及运行结束后的 M* 和三分支最终 snapshot hash。它不记录 CUDA 版本或 GPU 型号。`--artifact-root` 只改变实际写盘根，manifest 中嵌入的原始 `artifacts.root_dir` 配置不会被改写。
+记录 schema version、experiment ID、12 字符 manifest config hash、完整配置、seed、Git commit/分支/工作区状态、完整 argv、Python/PyTorch/CUDA/cuDNN、GPU/驱动、partition hash、客户端列表、恶意客户端、所选分支、pretrain schedule、branch schedule，以及运行结束后的 M* 和所选分支最终 snapshot hash。`--artifact-root` 只改变实际写盘根，manifest 中嵌入的原始 `artifacts.root_dir` 配置不会被改写；sweep 生成的 resolved config 会让两者一致。
 
 ### 6.2 snapshot 文件
 
@@ -372,13 +378,14 @@ artifacts/ucf101_generative_poison_defense/
 
 1. round 和 base snapshot hash；
 2. 采样客户端；
-3. 原始 `ClientUpdate(delta)`；
+3. 原始 `ClientUpdate(delta)`，包括真实 `malicious`、`attack_active`、
+   `poison_sample_count` 和 generator artifact ID；
 4. 每客户端 norm/cosine 分数、阈值、accept/clip/reject/quarantine、原因和最终权重；
 5. 裁剪或过滤后的更新；
 6. 聚合后状态及诊断；
 7. 当轮 dev 评估。
 
-单轮文件便于审计，`round_records.pt` 是按 `pretrain/clean/attack/defended` 分组的完整 bundle。读取时重新执行所有 constructor 校验并核对 record hash。当前实现是在一个阶段正常返回后批量写 `round_records/<phase>/`，不是每轮即时写单轮文件；训练中的逐轮恢复依赖 `resume_state.pt` 内的 active records。
+单轮文件便于审计，`round_records.pt` 是按 `pretrain` 和实际所选分支分组的完整 bundle。读取时重新执行所有 constructor 校验并核对 record hash。当前实现是在一个阶段正常返回后批量写 `round_records/<phase>/`，不是每轮即时写单轮文件；训练中的逐轮恢复依赖 `resume_state.pt` 内的 active records。
 
 ### 6.5 `resume_state.pt`
 
@@ -399,14 +406,17 @@ snapshot、生成器 lifecycle、分支进度和可选 EWMA reputation。
 - `m_star.dev_metrics`：选择 M* 的 dev acc/UAR/F1/loss；
 - `m_star.test_metrics`：M* 固定后第一次 test 报告；
 - `branches.<name>.dev_metrics/test_metrics`：三个最终模型指标；
-- `branches.<name>.test_metrics.attack_success_rate`：test 中 `victim_eval_class` 样本被预测为 `goal_prediction_class` 的比例；
+- `branches.<name>.test_metrics.attack_success_rate`：test 中 `victim_eval_class` 样本被预测为 `goal_prediction_class` 的比例；同时保存百分比、源类样本数、源类准确率/召回率、目标类假阳性率、非源类准确率和 Macro-F1；
+- `branches.<attack|defended>.delta_asr_percentage_points`：相对 clean 的 ΔASR 百分点；
+- `branches.<attack|defended>.attack_exposure`：实际含恶意客户端轮数、恶意席位、有效投毒更新和总投毒样本；
+- `branches.<name>.generator_checkpoint_hashes`：生成器 checkpoint SHA-256；
 - `branches.defended.detection_metrics`：defended 每轮决策汇总出的 precision、recall、FPR、FNR、AUROC 和 TP/FP/TN/FN；
 - `branches.<attack|defended>.clean_utility_drop`：clean 分支 test accuracy 减去对应分支 test accuracy；
 - `branches.<name>.generator_artifacts`：各恶意客户端最终使用的 artifact hash。
 
 建议分析顺序：
 
-1. 用 clean/attack/defended test accuracy、UAR 和 F1 比较正常效用；
+1. 用实际所选分支的 test accuracy、UAR 和 F1 比较正常效用；
 2. 用 attack 与 defended ASR 比较攻击效果和防御收益；
 3. 用 detection metrics 判断服务器识别质量；
 4. 从逐轮 decisions 检查误报集中在哪些客户端和轮次；
@@ -441,7 +451,7 @@ key、shape、dtype 完全匹配，避免部分旧权重留下随机层后仍输
 - M* 后在 `generator_checkpoints/base/` 为每个恶意客户端训练一次；
 - attack/defended lifecycle 从同一 base state 恢复，不重新训练；
 - `generators/base` 保存原始 lineage，`generators/attack` 和 `generators/defended` 可保存引用同一 checkpoint 的阶段审计 JSON；
-- resume 保存 base artifacts 和三分支使用状态。
+- resume 保存 base artifacts 和实际所选分支的使用状态。
 
 ### `online_refresh`
 

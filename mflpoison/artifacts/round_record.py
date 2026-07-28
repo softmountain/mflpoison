@@ -23,22 +23,40 @@ def _update_payload(update):
         "aggregation_weight": update.aggregation_weight,
         "metrics": dict(update.metrics),
         "artifact_ids": list(update.artifact_ids),
+        "malicious": bool(update.malicious),
+        "attack_active": bool(update.attack_active),
+        "poison_sample_count": int(update.poison_sample_count),
         "delta_hash": tensor_map_hash(update.delta),
     }
 
 
+def _legacy_update_payload(update):
+    payload = _update_payload(update)
+    for name in ("malicious", "attack_active", "poison_sample_count"):
+        payload.pop(name)
+    return payload
+
+
 def round_record_hash(record: RoundRecord) -> str:
+    return _record_hash(record, _update_payload)
+
+
+def _legacy_round_record_hash(record: RoundRecord) -> str:
+    return _record_hash(record, _legacy_update_payload)
+
+
+def _record_hash(record: RoundRecord, update_payload) -> str:
     return mapping_hash(
         {
             "round_index": record.round_index,
             "base_snapshot_hash": record.base_snapshot_hash,
             "selected_client_ids": list(record.selected_client_ids),
-            "raw_updates": [_update_payload(item) for item in record.raw_updates],
+            "raw_updates": [update_payload(item) for item in record.raw_updates],
             "defense_decisions": [
                 asdict(item) for item in record.defense_decisions
             ],
             "processed_updates": [
-                _update_payload(item) for item in record.processed_updates
+                update_payload(item) for item in record.processed_updates
             ],
             "aggregation_state_hash": tensor_map_hash(
                 record.aggregation_result.state
@@ -71,6 +89,8 @@ def _revalidate_update(update: ClientUpdate) -> ClientUpdate:
         metrics=update.metrics,
         artifact_ids=update.artifact_ids,
         malicious=update.malicious,
+        attack_active=getattr(update, "attack_active", False),
+        poison_sample_count=getattr(update, "poison_sample_count", 0),
     )
 
 
@@ -127,7 +147,7 @@ def save_round_record(record: RoundRecord, path) -> Path:
     temporary = path.with_suffix(path.suffix + ".tmp")
     torch.save(
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "record": record,
             "content_hash": round_record_hash(record),
         },
@@ -141,13 +161,17 @@ def load_round_record(path, map_location="cpu") -> RoundRecord:
     payload = torch.load(Path(path), map_location=map_location)
     if not isinstance(payload, Mapping):
         raise TypeError("round record artifact must contain a mapping")
-    if int(payload.get("schema_version", -1)) != 1:
+    schema_version = int(payload.get("schema_version", -1))
+    if schema_version not in (1, 2):
         raise ValueError("unsupported round record schema version")
-    record = revalidate_round_record(payload.get("record"))
+    raw_record = payload.get("record")
     expected_hash = str(payload.get("content_hash", ""))
-    if not expected_hash or round_record_hash(record) != expected_hash:
+    hash_function = (
+        _legacy_round_record_hash if schema_version == 1 else round_record_hash
+    )
+    if not expected_hash or hash_function(raw_record) != expected_hash:
         raise ValueError("round record content hash does not match its payload")
-    return record
+    return revalidate_round_record(raw_record)
 
 
 def save_round_record_bundle(phases: Mapping[str, object], path) -> Path:
@@ -164,7 +188,7 @@ def save_round_record_bundle(phases: Mapping[str, object], path) -> Path:
     temporary = path.with_suffix(path.suffix + ".tmp")
     torch.save(
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "phases": normalized,
             "record_hashes": record_hashes,
             "content_hash": mapping_hash({"record_hashes": record_hashes}),
@@ -179,23 +203,26 @@ def load_round_record_bundle(path, map_location="cpu"):
     payload = torch.load(Path(path), map_location=map_location)
     if not isinstance(payload, Mapping):
         raise TypeError("round record bundle must contain a mapping")
-    if int(payload.get("schema_version", -1)) != 2:
+    schema_version = int(payload.get("schema_version", -1))
+    if schema_version not in (2, 3):
         raise ValueError("unsupported round record bundle schema version")
     phases = payload.get("phases")
     hashes = payload.get("record_hashes")
     if not isinstance(phases, Mapping) or not isinstance(hashes, Mapping):
         raise TypeError("round record bundle has an invalid phase mapping")
-    normalized = {
-        str(phase): [revalidate_round_record(record) for record in records]
-        for phase, records in phases.items()
-    }
+    hash_function = (
+        _legacy_round_record_hash if schema_version == 2 else round_record_hash
+    )
     actual_hashes = {
-        phase: [round_record_hash(record) for record in records]
-        for phase, records in normalized.items()
+        str(phase): [hash_function(record) for record in records]
+        for phase, records in phases.items()
     }
     if actual_hashes != dict(hashes):
         raise ValueError("round record bundle hashes do not match its records")
     expected = str(payload.get("content_hash", ""))
     if not expected or mapping_hash({"record_hashes": actual_hashes}) != expected:
         raise ValueError("round record bundle content hash does not match")
-    return normalized
+    return {
+        str(phase): [revalidate_round_record(record) for record in records]
+        for phase, records in phases.items()
+    }

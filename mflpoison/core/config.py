@@ -115,9 +115,17 @@ class FederationConfig:
     patience: Optional[int] = None
     min_delta: float = 0.0
     resume_from: Optional[str] = None
+    m_star_path: Optional[str] = None
+    m_star_snapshot_hash: Optional[str] = None
+    branches: Tuple[str, ...] = ()
     options: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
+        object.__setattr__(
+            self,
+            "branches",
+            _string_tuple(self.branches, "federation.branches"),
+        )
         if min(
             int(self.rounds),
             int(self.attack_rounds),
@@ -135,6 +143,25 @@ class FederationConfig:
             raise ValueError("federation.convergence_mode must be 'min' or 'max'")
         if self.patience is not None and int(self.patience) < 1:
             raise ValueError("federation.patience must be positive")
+        if (self.m_star_path is None) != (self.m_star_snapshot_hash is None):
+            raise ValueError(
+                "federation.m_star_path and m_star_snapshot_hash must be set together"
+            )
+        if self.m_star_path is not None and not str(self.m_star_path):
+            raise ValueError("federation.m_star_path cannot be empty")
+        if self.m_star_snapshot_hash is not None and not str(
+            self.m_star_snapshot_hash
+        ):
+            raise ValueError("federation.m_star_snapshot_hash cannot be empty")
+        allowed_branches = {"clean", "attack", "defended"}
+        unknown_branches = sorted(set(self.branches) - allowed_branches)
+        if unknown_branches:
+            raise ValueError(
+                "federation.branches contains unsupported branch(es): "
+                + ", ".join(unknown_branches)
+            )
+        if len(set(self.branches)) != len(self.branches):
+            raise ValueError("federation.branches cannot contain duplicates")
 
     @property
     def effective_pretrain_rounds(self) -> int:
@@ -306,6 +333,25 @@ class ScenarioConfig:
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
+
+    @property
+    def selected_branches(self) -> Tuple[str, ...]:
+        """Resolve explicit branch selection or safe defaults from enabled features."""
+
+        configured = tuple(self.federation.branches)
+        if configured:
+            selected = configured
+        else:
+            selected = ("clean",)
+            if self.attack.enabled:
+                selected += ("attack",)
+            if self.defense.enabled:
+                selected += ("defended",)
+        if "attack" in selected and not self.attack.enabled:
+            raise ValueError("the attack branch requires attack.enabled=true")
+        if "defended" in selected and not self.defense.enabled:
+            raise ValueError("the defended branch requires defense.enabled=true")
+        return selected
 
     @property
     def content_hash(self) -> str:
