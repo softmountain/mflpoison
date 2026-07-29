@@ -27,7 +27,7 @@ def _checkpoint_state_from_payload(payload) -> Mapping[str, torch.Tensor]:
 def build_default_runner(
     config: ScenarioConfig,
     *,
-    results_dir: Optional[Path] = None,
+    artifact_dir: Optional[Path] = None,
 ) -> ScenarioRunner:
     """Build the production UCF101/FedMM scenario from strict configuration."""
 
@@ -255,19 +255,19 @@ def build_default_runner(
         seed=config.federation.seed,
     )
     clean_aggregator = AGGREGATOR_REGISTRY.create("weighted_mean")
-    resolved_root = Path(
-        config.results.root_dir if results_dir is None else results_dir
+    artifact_root = Path(
+        config.artifact.root_dir if artifact_dir is None else artifact_dir
     )
 
     lifecycle_factory = None
     attack_strategy = None
     if config.attack.enabled:
         if config.generator.checkpoint_dir is None:
-            checkpoint_root = resolved_root / "checkpoints" / "generators"
+            checkpoint_root = artifact_root / "checkpoints" / "generators"
         else:
             checkpoint_root = Path(config.generator.checkpoint_dir)
             if not checkpoint_root.is_absolute():
-                checkpoint_root = resolved_root / checkpoint_root
+                checkpoint_root = artifact_root / checkpoint_root
 
         def lifecycle_factory(phase: str):
             output_dir = checkpoint_root / phase
@@ -408,5 +408,5 @@ def build_default_runner(
         generator_lifecycle_factory=lifecycle_factory,
         attack_strategy=attack_strategy,
         defense_pipeline=defense_pipeline,
-        results_dir=resolved_root,
+        artifact_dir=artifact_root,
     )

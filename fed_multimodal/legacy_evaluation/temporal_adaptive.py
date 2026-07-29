@@ -41,7 +41,7 @@ def parse_args():
     parser.add_argument(
         "--output_dir",
         type=str,
-        default="results/legacy_evaluation/temporal_adaptive",
+        default="artifact/legacy_evaluation/temporal_adaptive",
     )
     parser.add_argument("--num_batches", type=int, default=20)
     parser.add_argument("--seed", type=int, default=42)

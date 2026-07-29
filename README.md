@@ -42,7 +42,7 @@ python -m mflpoison.runner \
 - `ucf101_fdmm_dtm_poison_0to1.yaml`：clean 与 attack 分支；
 - `ucf101_fdmm_dtm_poison_0to1_defense.yaml`：clean、attack 与 defended 分支；
 - `ucf101_fdmm_dtm_poison_0to1_smoke.yaml`：短流程连通性测试；
-- `poison_strength/*.yaml`：只覆盖恶意客户端数、中毒比例和生成器 epoch 等实验参数。
+- `ucf101_dtm_poison_strength/*.yaml`：使用人类可读文件名配置恶意客户端数、中毒比例和生成器 epoch。
 
 完整配置包含八部分：
 
@@ -53,7 +53,7 @@ python -m mflpoison.runner \
 - `attack`：恶意客户端、中毒预算、注入方式和 0→1 标签语义；
 - `defense`：检测器、裁剪器、聚合器和决策策略；
 - `evaluation`：test、攻击与检测指标开关；
-- `results`：结果根目录。
+- `artifact`：运行产物根目录。
 
 命令行 `--seed` 会同时覆盖联邦训练与生成器 seed；`--run-dir` 可显式指定本次运行目录：
 
@@ -61,7 +61,7 @@ python -m mflpoison.runner \
 python -m mflpoison.runner \
   --config configs/experiments/ucf101_fdmm_dtm_poison_0to1.yaml \
   --seed 42 \
-  --run-dir results/2026-07-29/ucf101_fdmm_dtm_poison_0to1/12-00-00_seed-42
+  --run-dir artifact/ucf101_fdmm_dtm_poison_0to1/20260729-120000_seed-42_git-8d6f0057
 ```
 
 ## 数据与安装
@@ -92,22 +92,22 @@ conda run -p /mnt/sda/mtzh/xp/envs/fedpoi-py39 \
   python -c "import torch, fed_multimodal, mflpoison; print(torch.__version__)"
 ```
 
-## 结果目录
+## 运行产物
 
-`results/` 不需要预先创建。未指定 `--run-dir` 时，入口按需创建：
+`artifact/` 不需要预先创建。未指定 `--run-dir` 时，入口按配置位置创建：
 
 ```text
-results/YYYY-MM-DD/<config-name>/HH-MM-SS_seed-N/
+artifact/<config-name>/<YYYYMMDD-HHMMSS>_seed-<N>_git-<short-sha>/
+artifact/<config-group>/<config-name>/<YYYYMMDD-HHMMSS>_seed-<N>_git-<short-sha>/
 ```
 
-例如：
+直接配置示例：
 
 ```text
-results/2026-07-29/ucf101_fdmm_dtm_poison_0to1_defense/12-00-00_seed-42/
+artifact/ucf101_fdmm_dtm_poison_0to1_defense/20260729-120000_seed-42_git-8d6f0057/
 ├── config_resolved.yaml
-├── run_info.json
+├── run_manifest.json
 ├── summary.json
-├── train.log
 ├── checkpoints/
 │   ├── initial.pt
 │   ├── m_star.pt
@@ -116,10 +116,20 @@ results/2026-07-29/ucf101_fdmm_dtm_poison_0to1_defense/12-00-00_seed-42/
 │   ├── defended_last.pt
 │   └── generators/
 ├── generators/
-└── rounds.pt
+└── round_records.pt
 ```
 
-`config_resolved.yaml` 是实际生效配置，`run_info.json` 记录运行信息，`summary.json` 汇总 M*、分支 test/ASR、攻击暴露和防御检测结果。逐轮客户端更新与服务器决策统一位于 `rounds.pt`。
+批处理脚本还会在每个运行目录中保存 `train.log`。
+
+参数配置示例：
+
+```text
+artifact/ucf101_dtm_poison_strength/
+└── malicious-clients-2_poison-50pct_generator-epochs-20/
+    └── 20260729-120000_seed-42_git-8d6f0057/
+```
+
+`config_resolved.yaml` 保存全部实际参数，`run_manifest.json` 记录提交和运行环境，`summary.json` 汇总 M*、分支 test/ASR、攻击暴露和防御检测结果。逐轮客户端更新与服务器决策统一位于 `round_records.pt`。
 
 ## 多 GPU 批处理
 
@@ -128,14 +138,14 @@ results/2026-07-29/ucf101_fdmm_dtm_poison_0to1_defense/12-00-00_seed-42/
 ```bash
 PYTHON_BIN=/mnt/sda/mtzh/xp/envs/fedpoi-py39/bin/python \
 bash scripts/run_experiments.sh \
-  0:configs/experiments/poison_strength/clients1_poison20_gen20.yaml:42 \
-  1:configs/experiments/poison_strength/clients2_poison50_gen20.yaml:42
+  0:configs/experiments/ucf101_dtm_poison_strength/malicious-clients-1_poison-20pct_generator-epochs-20.yaml:42 \
+  1:configs/experiments/ucf101_dtm_poison_strength/malicious-clients-2_poison-50pct_generator-epochs-20.yaml:42
 ```
 
 每个作业的日志写入自己的 `train.log`；批次监控表写入：
 
 ```text
-results/batches/YYYY-MM-DD/HH-MM-SS/status.tsv
+artifact/batches/<YYYYMMDD-HHMMSS>/status.tsv
 ```
 
 ## 目录边界
@@ -146,6 +156,6 @@ results/batches/YYYY-MM-DD/HH-MM-SS/status.tsv
 - `fed_multimodal/`：UCF101 数据、模型、FedAvg 与生成器兼容实现；
 - `experiments/`：旧 checkpoint 的人工分析工具；
 - `tests/`：自动化测试；
-- `results/`：运行时按需创建的结果，不进入 Git；清理最后一次临时运行后不保留空目录。
+- `artifact/`：运行时按需创建的产物，不进入 Git；清理最后一次临时运行后不保留空目录。
 
 本项目仅用于防御性安全研究和多模态联邦学习鲁棒性评估。

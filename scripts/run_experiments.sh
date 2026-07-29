@@ -8,10 +8,11 @@ if [ "$#" -eq 0 ]; then
 fi
 
 python_bin="${PYTHON_BIN:-python}"
-results_root="${RESULTS_ROOT:-results}"
+artifact_root="${ARTIFACT_ROOT:-artifact}"
 monitor_interval="${MONITOR_INTERVAL:-30}"
-batch_time="$(date +%H-%M-%S)"
-batch_dir="$results_root/batches/$(date +%F)/$batch_time"
+batch_id="$(date +%Y%m%d-%H%M%S)"
+git_sha="$(git rev-parse --short=8 HEAD)"
+batch_dir="$artifact_root/batches/$batch_id"
 status_file="$batch_dir/status.tsv"
 mkdir -p "$batch_dir"
 
@@ -39,9 +40,14 @@ for job in "$@"; do
   seed="${remainder#*:}"
 
   name="$(basename "${config%.*}")"
-  run_time="$(date +%H-%M-%S)"
-  run_dir="$results_root/$(date +%F)/$name/$run_time"
-  run_dir="${run_dir}_seed-${seed}"
+  config_group="$(basename "$(dirname "$config")")"
+  if [ "$config_group" = "experiments" ]; then
+    experiment_path="$name"
+  else
+    experiment_path="$config_group/$name"
+  fi
+  run_id="$(date +%Y%m%d-%H%M%S)_seed-${seed}_git-${git_sha}"
+  run_dir="$artifact_root/$experiment_path/$run_id"
   mkdir -p "$run_dir"
 
   command=(

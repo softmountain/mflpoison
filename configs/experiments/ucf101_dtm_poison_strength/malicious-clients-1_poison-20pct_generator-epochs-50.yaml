@@ -1,0 +1,9 @@
+base_config: ../ucf101_fdmm_dtm_poison_0to1.yaml
+# Key experiment dimensions are explicit in the filename and overrides.
+overrides:
+  attack:
+    malicious_clients: ["1"]
+    malicious_client_count: 1
+    poison_ratio: 0.2
+  generator:
+    epochs: 50

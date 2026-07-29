@@ -103,7 +103,7 @@ def parse_args():
     parser.add_argument('--log_interval', type=int, default=10,
                         help='Logging interval (epochs)')
     parser.add_argument('--output_dir', type=str,
-                        default='results/legacy_evaluation/tstr',
+                        default='artifact/legacy_evaluation/tstr',
                         help='Output directory')
 
     args = parser.parse_args()

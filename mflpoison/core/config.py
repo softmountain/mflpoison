@@ -247,12 +247,12 @@ class EvaluationConfig:
 
 
 @dataclass(frozen=True)
-class ResultsConfig:
-    root_dir: str = "results"
+class ArtifactConfig:
+    root_dir: str = "artifact"
 
     def __post_init__(self):
         if not self.root_dir:
-            raise ValueError("results.root_dir cannot be empty")
+            raise ValueError("artifact.root_dir cannot be empty")
 
 
 SectionType = TypeVar("SectionType")
@@ -279,7 +279,7 @@ class ScenarioConfig:
     attack: AttackConfig
     defense: DefenseConfig
     evaluation: EvaluationConfig
-    results: ResultsConfig
+    artifact: ArtifactConfig
 
     SECTION_TYPES = {
         "dataset": DatasetConfig,
@@ -289,7 +289,7 @@ class ScenarioConfig:
         "attack": AttackConfig,
         "defense": DefenseConfig,
         "evaluation": EvaluationConfig,
-        "results": ResultsConfig,
+        "artifact": ArtifactConfig,
     }
 
     @classmethod

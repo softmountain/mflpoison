@@ -31,7 +31,7 @@ flowchart TD
     Attack --> Coordinator
     Coordinator --> Defense
     Scenario --> Store["runner.persistence.ResultStore"]
-    Store --> Results["results/YYYY-MM-DD/config/time_seed-N"]
+    Store --> Artifact["artifact/config-group/config/time_seed_git"]
 ```
 
 代码职责保持单向：配置描述实验，builder 组装对象，scenario 编排阶段，coordinator 执行联邦轮次，攻击只改变恶意客户端的数据视图，防御只处理服务器收到的客户端更新。
@@ -45,7 +45,7 @@ flowchart TD
 | `configs/experiments/ucf101_fdmm_dtm_poison_0to1.yaml` | clean/attack 基准实验 |
 | `configs/experiments/ucf101_fdmm_dtm_poison_0to1_defense.yaml` | 增加 defended 分支 |
 | `configs/experiments/ucf101_fdmm_dtm_poison_0to1_smoke.yaml` | 最短连通性验证 |
-| `configs/experiments/poison_strength/*.yaml` | 基于主配置覆盖少量超参数 |
+| `configs/experiments/ucf101_dtm_poison_strength/*.yaml` | 基于主配置显式设置关键实验参数 |
 | `mflpoison/core/config.py` | 配置 dataclass、严格字段检查、`base_config` 合并 |
 
 派生配置只包含：
@@ -73,7 +73,7 @@ overrides:
 | `attack` | `AttackSpec`、恶意客户端选择、生成式中毒策略 |
 | `defense` | detector、sanitizer、aggregator、`DefensePipeline` |
 | `evaluation` | dev/test、0→1 定向攻击指标 |
-| `results` | 默认结果根目录 |
+| `artifact` | 默认运行产物根目录 |
 
 ## 3. 程序启动
 
@@ -82,7 +82,7 @@ overrides:
 1. 解析 `--config`、可选 `--seed` 和可选 `--run-dir`；
 2. 调用 `load_scenario_config` 得到完整 `ScenarioConfig`；
 3. 用 `--seed` 同时覆盖联邦和生成器 seed；
-4. 生成本次 `run_dir` 并保存 `config_resolved.yaml`；
+4. 根据配置名、日期时间、seed 和 Git 短哈希生成 `run_dir`，并保存 `config_resolved.yaml`；
 5. 调用 `runner.builder.build_default_runner`；
 6. 执行 `ScenarioRunner.run()`；
 7. 输出 M* hash、`summary.json` 路径和 `run_dir`。
@@ -207,9 +207,10 @@ mflpoison/defenses/
 `ScenarioRunner` 在每轮使用 dev 指标追踪训练，在 M* 和各分支结束后使用 test 指标。`runner.persistence.ResultStore` 保存：
 
 ```text
-results/YYYY-MM-DD/<config-name>/HH-MM-SS_seed-N/
+artifact/<config-name>/<YYYYMMDD-HHMMSS>_seed-<N>_git-<short-sha>/
+artifact/<config-group>/<config-name>/<YYYYMMDD-HHMMSS>_seed-<N>_git-<short-sha>/
 ├── config_resolved.yaml       # 完整实际配置
-├── run_info.json              # seed、客户端、日程、运行信息
+├── run_manifest.json          # seed、提交、客户端、日程、运行环境
 ├── summary.json               # M*、分支 test/ASR、攻击暴露、防御指标
 ├── checkpoints/
 │   ├── initial.pt
@@ -217,10 +218,10 @@ results/YYYY-MM-DD/<config-name>/HH-MM-SS_seed-N/
 │   ├── <branch>_last.pt
 │   └── generators/
 ├── generators/                # 每客户端生成器 lineage
-└── rounds.pt                  # 所有阶段的逐轮记录
+└── round_records.pt           # 所有阶段的逐轮记录
 ```
 
-`results/` 及其日期、实验和运行子目录均由入口按需创建，不需要在仓库中预建。smoke 或测试结果验收后，应同时删除结果、缓存和已经为空的父目录。
+`artifact/` 及其实验、配置和运行子目录均由入口按需创建，不需要在仓库中预建。smoke 或测试产物验收后，应立即删除产物、缓存和已经为空的父目录。
 
 显式 `--run-dir` 时使用指定目录；批处理脚本还会把 stdout/stderr 写入该目录的 `train.log`。
 
@@ -228,7 +229,7 @@ results/YYYY-MM-DD/<config-name>/HH-MM-SS_seed-N/
 
 - `config_resolved.yaml`：确认实际参数；
 - `summary.json`：比较 clean、attack、defended 的效用、ASR 和检测指标；
-- `rounds.pt`：检查客户端暴露、中毒是否生效以及服务器逐轮决策。
+- `round_records.pt`：检查客户端暴露、中毒是否生效以及服务器逐轮决策。
 
 ## 10. 多 GPU 批处理与监控
 
@@ -243,15 +244,15 @@ GPU:CONFIG:SEED
 ```bash
 PYTHON_BIN=/mnt/sda/mtzh/xp/envs/fedpoi-py39/bin/python \
 bash scripts/run_experiments.sh \
-  0:configs/experiments/poison_strength/clients1_poison20_gen20.yaml:42 \
-  1:configs/experiments/poison_strength/clients2_poison50_gen20.yaml:42 \
-  2:configs/experiments/poison_strength/clients3_poison50_gen50.yaml:42
+  0:configs/experiments/ucf101_dtm_poison_strength/malicious-clients-1_poison-20pct_generator-epochs-20.yaml:42 \
+  1:configs/experiments/ucf101_dtm_poison_strength/malicious-clients-2_poison-50pct_generator-epochs-20.yaml:42 \
+  2:configs/experiments/ucf101_dtm_poison_strength/malicious-clients-3_poison-50pct_generator-epochs-50.yaml:42
 ```
 
 脚本对每个作业设置 `CUDA_VISIBLE_DEVICES`，调用同一个 `python -m mflpoison.runner`，并维护：
 
 ```text
-results/batches/YYYY-MM-DD/HH-MM-SS/status.tsv
+artifact/batches/<YYYYMMDD-HHMMSS>/status.tsv
 ```
 
 状态为 `running`、`completed` 或 `failed`，每个作业的完整日志位于自己的 `train.log`。批量运行没有另一套训练逻辑，区别仍全部来自配置文件。
@@ -267,7 +268,7 @@ fedpoi/
 ├── experiments/               # 旧 checkpoint 人工分析工具
 ├── tests/                     # 自动化测试
 ├── docs/                      # 当前结构说明
-└── results/                   # 运行时按需创建，不进入 Git
+└── artifact/                  # 运行时按需创建，不进入 Git
 ```
 
-生产训练不要从 `experiments/` 另建入口，也不要为超参数组合复制 Python 文件。一次实验应由一个语义明确的 YAML 配置和一个独立、可检索的结果目录对应。
+生产训练不要从 `experiments/` 另建入口，也不要为超参数组合复制 Python 文件。一次实验应由一个语义明确的 YAML 配置和一个独立、可检索的产物目录对应。

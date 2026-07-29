@@ -6,39 +6,73 @@
 - BJMU SSH 别名：`bjmu4090`
 - BJMU 仓库：`/mnt/sda/mtzh/xp/fedpoi`
 - BJMU Python：`/mnt/sda/mtzh/xp/envs/fedpoi-py39/bin/python`
-- UCF101 特征根：`fed_multimodal/results`
+- UCF101 输入特征：`fed_multimodal/results`
 - 唯一生产入口：`python -m mflpoison.runner`
 - 实验配置：`configs/experiments/`
 - 多 GPU 批处理：`scripts/run_experiments.sh`
-- 结果目录：`results/YYYY-MM-DD/<config-name>/HH-MM-SS_seed-N/`
+- 运行产物：`artifact/<experiment>/<variant>/<YYYYMMDD-HHMMSS>_seed-<N>_git-<sha>/`
 
-本地负责需求、暂存审查、验收和提交；BJMU 负责候选代码实施、测试和正式实验。环境、路径、入口或流程在批准后发生变化时，必须在同一批改动中更新两端 `AGENTS.md`；失效信息直接删除，不保留历史说明。
+`fed_multimodal/results/` 是历史兼容的输入特征目录，不属于运行产物，不随 `artifact/` 重命名。
 
-仓库不预建空目录。`results/`、缓存和临时目录都由实际命令按需创建，任务完成并清理内容后应一并删除空父目录。旧 `artifacts/` 工作流已经移除，不得重新使用该目录名。
+## 命名与文件准入
 
-## 日常改动流程
+- Python 模块、函数和变量使用 `snake_case`，类使用 `PascalCase`，名称表达职责或方法。
+- 不使用 `new`、`final`、`v2`、`try2`、日期或单次超参数命名源码文件。
+- 基准配置名表达数据集、模型、攻击和防御，例如 `ucf101_fdmm_dtm_poison_0to1_defense.yaml`。
+- 参数配置名使用完整、固定的字段名，例如 `malicious-clients-2_poison-50pct_generator-epochs-20.yaml`；不使用含义不明的缩写。
+- 超参数、seed 和客户端组合只写 YAML，不复制 Python 训练文件，也不为单次实验增加脚本。
+- 只有明确新增算法、方法或独立可复用职责时才新增 Python 文件；其他需求优先修改已有模块。
+- 不新增普通流程不需要的 preflight、hash、sweep、安全包装或重复确认程序。
 
-### 1. 确认基线
+## 运行产物
 
-本地和 BJMU 分别运行：
+单次运行目录遵循：
+
+```text
+artifact/
+└── <experiment-or-config-group>/
+    └── <config-name>/
+        └── <YYYYMMDD-HHMMSS>_seed-<N>_git-<short-sha>/
+```
+
+配置直接位于 `configs/experiments/` 时省略中间的 config-group 层。每次运行保存固定职责文件：
+
+```text
+config_resolved.yaml
+run_manifest.json
+summary.json
+round_records.pt
+checkpoints/
+generators/
+```
+
+目录名只放实验语义、关键差异参数和运行标识；全部实际参数保存在 `config_resolved.yaml`，提交、运行环境和完成状态保存在 `run_manifest.json`。批处理任务另存 `train.log`。目录内部不再给每个文件重复拼接日期和超参数。
+
+仓库不预建空的 `artifact/`、缓存或临时目录。命令按需创建，清理最后一个临时运行后同时删除空父目录。
+
+## 改动、测试与本地审核
+
+### 1. 开始
+
+本地和 BJMU 各执行一次：
 
 ```bash
 git rev-parse HEAD
 git status --short
 ```
 
-开始正式改动前，两端 HEAD 应一致，BJMU 不应有未批准的 tracked 改动，也不应有旧实验占用目标 GPU。
+两端从同一批准提交开始，BJMU 没有未批准的 tracked 改动或占用目标 GPU 的旧实验即可实施。
 
-### 2. BJMU 实施并做 smoke test
+### 2. BJMU 实施与测试
 
-- 按本地给出的明确范围修改，不顺手增加兼容入口、安全包装或新的 Python 变体。
-- 算法和可复用能力写入 `mflpoison/`；超参数组合只写 YAML。
-- 先运行相关单测，再用 `ucf101_fdmm_dtm_poison_0to1_smoke.yaml` 验证完整调用链。
-- smoke 输出只放在 `results/smoke/` 或明确的临时目录。确认日志后删除该次 smoke 结果、临时日志、缓存和清空后的父目录；正式实验目录不得当作测试目录。
+- 按明确范围修改现有代码和配置。
+- 普通修改运行相关单测和一次 smoke；通过后默认软件调用链可靠，不再增加额外验证程序。
+- smoke 只验证程序可运行，不代替正式实验或科学结论。
+- smoke 输出放在 `artifact/smoke/`，验收日志后立即删除该次产物、临时日志、测试缓存和空父目录。
 
-### 3. 本地暂存审查
+### 3. 本地暂存审核
 
-取得 BJMU 的候选 diff 后，本地只暂存候选文件：
+将 BJMU 候选 diff 应用到本地后，只暂存明确文件：
 
 ```bash
 git add <明确文件列表>
@@ -46,35 +80,29 @@ git diff --cached --stat
 git diff --cached
 ```
 
-暂存区就是待审快照，不再复制一套候选目录。审查代码、配置、测试、指标语义和结果命名：
+暂存区就是待审版本，不复制候选目录：
 
-- 不通过：`git restore --staged <文件>`，说明问题并由 BJMU 修正；
-- 通过：保留暂存内容并提交；
-- 不得使用 `git add .` 夹带图片、数据、checkpoint、结果或用户无关文件。
+- 通过：直接提交并推送；
+- 不通过：`git restore --staged -- <文件>`，再撤销仅属于本次候选的本地工作区内容，BJMU 按意见继续修改；
+- `git restore --staged` 只撤销暂存，不会删除工作区改动；
+- 不使用 `git add .`，不夹带数据、图片、checkpoint、运行产物或用户无关文件。
 
-普通文本改动不计算逐文件哈希。只有二进制传输、patch 异常或两端内容确有疑问时才比较 SHA-256。
+普通文本不计算哈希。只有二进制传输异常、patch 异常或两端内容确实不一致时才比较 SHA-256。
 
-### 4. 提交和同步
+### 4. 提交与同步
 
-本地提交批准的暂存内容后，将该提交同步到 BJMU。随后两端再次核对：
+本地提交是批准版本。推送后 BJMU 丢弃仅属于候选 diff 的未提交副本，并以 fast-forward 同步批准提交。完成后两端各执行一次：
 
 ```bash
 git rev-parse HEAD
 git status --short
 ```
 
-正式实验必须基于两端相同的批准提交，且 BJMU tracked 工作区干净。不得 reset、force-push、整目录覆盖或删除无关文件。
+不再增加中间确认轮次。正式实验只使用已同步的批准提交。
 
-## 实验约定
+## 实验执行
 
-### 配置而不是代码变体
-
-- 基准实验使用完整语义配置名，例如 `ucf101_fdmm_dtm_poison_0to1.yaml`。
-- 参数变体使用 `base_config + overrides`，例如 `poison_strength/clients2_poison50_gen20.yaml`。
-- 禁止为恶意客户端数、中毒比例、generator epoch 或 seed 复制 Python 训练文件。
-- 文件名使用小写 `snake_case`，不使用 `new`、`final`、`try2`、`artifact` 等含义不清的名称。
-
-### 单次运行
+单次运行：
 
 ```bash
 python -m mflpoison.runner \
@@ -82,22 +110,20 @@ python -m mflpoison.runner \
   --seed 42
 ```
 
-入口保存 `config_resolved.yaml`、`run_info.json`、`summary.json`、`checkpoints/`、`generators/` 和逐轮记录。分析结果时报告实际提交、解析后配置、seed、完成状态和关键样本计数；计划或旧结果不能写成新实验结论。
-
-### 多 GPU 批处理
+批量实验只使用统一脚本，不为参数组合增加脚本：
 
 ```bash
 PYTHON_BIN=/mnt/sda/mtzh/xp/envs/fedpoi-py39/bin/python \
 bash scripts/run_experiments.sh \
-  0:configs/experiments/poison_strength/clients1_poison20_gen20.yaml:42 \
-  1:configs/experiments/poison_strength/clients2_poison50_gen20.yaml:42
+  0:configs/experiments/ucf101_dtm_poison_strength/malicious-clients-1_poison-20pct_generator-epochs-20.yaml:42 \
+  1:configs/experiments/ucf101_dtm_poison_strength/malicious-clients-2_poison-50pct_generator-epochs-20.yaml:42
 ```
 
-每个作业绑定一个 `CUDA_VISIBLE_DEVICES`，日志写入各自 `train.log`；批次状态写入 `results/batches/YYYY-MM-DD/HH-MM-SS/status.tsv`。运行中不得切换提交、修改所用配置或清理正式结果。
+脚本负责 GPU 绑定、并行启动、独立日志、PID/退出状态监控和 `artifact/batches/<batch-id>/status.tsv`。运行中不修改所用代码或配置，也不清理正式产物。
 
-## 只在异常时使用的规则
+## AGENTS.md 维护
 
-- 两端 diff 不一致：先比较 `git status` 和完整 diff；patch 传输先执行 `git apply --check`。
-- 网络无法同步：确认批准提交已推送；必要时使用 HTTPS 或 Git bundle，但同步后仍以 HEAD 和 tracked 状态为准。
-- 旧结果语义存疑：以当前代码、`config_resolved.yaml` 和原始逐轮记录为准。当前攻击方向为 `condition=0 / train_label=1 / victim=0 / goal=1`。
-- 结果来源不明：缺少提交、配置、seed 或完成状态的目录不用于正式对比，不补写成已验证实验。
+- 本文件只保留当前仍有效的环境、路径、入口、目录结构和工作规则；失效内容直接更新或删除。
+- 每批候选修改都检查是否改变上述信息，需要时把 `AGENTS.md` 纳入同一批暂存和审核。
+- 两端不维护分叉版本。本地批准提交后，BJMU 同步并重新读取同一份 `AGENTS.md`。
+- 常规安全检查直接在操作中完成，不为它们新建代码文件。不可恢复删除、正式实验目录覆盖和断点恢复仍需确认目标。

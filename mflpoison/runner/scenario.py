@@ -83,7 +83,7 @@ class ScenarioRunner:
         generator_lifecycle_factory: Optional[Callable[[str], Any]] = None,
         attack_strategy=None,
         defense_pipeline=None,
-        results_dir: Optional[Path] = None,
+        artifact_dir: Optional[Path] = None,
     ):
         if not isinstance(config, ScenarioConfig):
             raise TypeError("config must be a ScenarioConfig")
@@ -101,7 +101,7 @@ class ScenarioRunner:
         self.attack_strategy = attack_strategy
         self.defense_pipeline = defense_pipeline
         self.run_dir = Path(
-            config.results.root_dir if results_dir is None else results_dir
+            config.artifact.root_dir if artifact_dir is None else artifact_dir
         )
         self._result_store = ResultStore(config, self.run_dir)
 
@@ -175,7 +175,8 @@ class ScenarioRunner:
                 ),
             },
         )
-        write_manifest(manifest, self.run_dir / "run_info.json")
+        manifest["status"] = "running"
+        write_manifest(manifest, self.run_dir / "run_manifest.json")
         save_snapshot(initial_snapshot, self.run_dir / "checkpoints" / "initial.pt")
 
         pretrain_runtime_seeds = {}
@@ -283,7 +284,8 @@ class ScenarioRunner:
                 for name, result in branches.items()
             },
         }
-        write_manifest(manifest, self.run_dir / "run_info.json")
+        manifest["status"] = "completed"
+        write_manifest(manifest, self.run_dir / "run_manifest.json")
         return ScenarioResult(
             initial_snapshot=initial_snapshot,
             pretraining=pretraining,

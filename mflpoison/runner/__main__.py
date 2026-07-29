@@ -1,6 +1,7 @@
 import argparse
 import json
 import re
+import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Sequence
@@ -21,18 +22,37 @@ def _with_seed(config: ScenarioConfig, seed: Optional[int]) -> ScenarioConfig:
     return ScenarioConfig.from_mapping(payload)
 
 
-def _experiment_name(config_path: Path) -> str:
-    name = config_path.stem.lower()
+def _slug(name: str) -> str:
+    name = name.lower()
     return re.sub(r"[^a-z0-9_-]+", "_", name).strip("_") or "experiment"
+
+
+def _experiment_path(config_path: Path) -> Path:
+    experiment_name = _slug(config_path.stem)
+    group_name = _slug(config_path.parent.name)
+    if group_name == "experiments":
+        return Path(experiment_name)
+    return Path(group_name) / experiment_name
+
+
+def _git_short_sha() -> str:
+    return subprocess.check_output(
+        ["git", "rev-parse", "--short=8", "HEAD"],
+        text=True,
+    ).strip()
 
 
 def _default_run_dir(config: ScenarioConfig, config_path: Path) -> Path:
     now = datetime.now()
+    run_id = (
+        f"{now:%Y%m%d-%H%M%S}"
+        f"_seed-{config.federation.seed}"
+        f"_git-{_git_short_sha()}"
+    )
     return (
-        Path(config.results.root_dir)
-        / now.strftime("%Y-%m-%d")
-        / _experiment_name(config_path)
-        / f"{now:%H-%M-%S}_seed-{config.federation.seed}"
+        Path(config.artifact.root_dir)
+        / _experiment_path(config_path)
+        / run_id
     )
 
 
@@ -41,7 +61,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         description="Run the UCF101 federated poisoning and defense scenario"
     )
     parser.add_argument("--config", required=True, help="Scenario YAML or JSON path")
-    parser.add_argument("--run-dir", help="Exact result directory for this run")
+    parser.add_argument("--run-dir", help="Exact artifact directory for this run")
     parser.add_argument("--seed", type=int, help="Override federation and generator seed")
     args = parser.parse_args(argv)
     config_path = Path(args.config)
@@ -61,7 +81,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         )
     runner = build_default_runner(
         config,
-        results_dir=run_dir,
+        artifact_dir=run_dir,
     )
     result = runner.run()
     print(

@@ -51,7 +51,7 @@ class ResultStore:
         self._seen_generator_artifacts = set()
 
     def persist_records(self, phase: str, records: Sequence[Any]) -> None:
-        bundle_path = self.run_dir / "rounds.pt"
+        bundle_path = self.run_dir / "round_records.pt"
         phases = {}
         if bundle_path.exists():
             phases = load_round_record_bundle(bundle_path)

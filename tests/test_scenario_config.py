@@ -55,7 +55,7 @@ def valid_config():
             "aggregator": {"name": "weighted_mean"},
         },
         "evaluation": {"metrics": ["accuracy", "attack_success_rate"]},
-        "results": {"root_dir": "results/test-run"},
+        "artifact": {"root_dir": "artifact/test-run"},
     }
 
 
@@ -105,13 +105,13 @@ class ScenarioConfigTest(unittest.TestCase):
             ROOT
             / "configs"
             / "experiments"
-            / "poison_strength"
-            / "clients2_poison50_gen20.yaml"
+            / "ucf101_dtm_poison_strength"
+            / "malicious-clients-2_poison-50pct_generator-epochs-20.yaml"
         )
         self.assertEqual(config.attack.malicious_clients, ("0", "1"))
         self.assertEqual(config.attack.poison_ratio, 0.5)
         self.assertEqual(config.generator.epochs, 20)
-        self.assertEqual(config.results.root_dir, "results")
+        self.assertEqual(config.artifact.root_dir, "artifact")
 
     def test_federation_supports_two_phase_round_counts(self):
         config = valid_config()
@@ -143,11 +143,11 @@ class ScenarioConfigTest(unittest.TestCase):
 
     def test_reused_m_star_accepts_a_checkpoint_path(self):
         config = valid_config()
-        config["federation"]["m_star_path"] = "results/base/m_star.pt"
+        config["federation"]["m_star_path"] = "artifact/base/m_star.pt"
         loaded = ScenarioConfig.from_mapping(config)
         self.assertEqual(
             loaded.federation.m_star_path,
-            "results/base/m_star.pt",
+            "artifact/base/m_star.pt",
         )
 
     def test_production_configs_use_correct_zero_to_one_direction(self):

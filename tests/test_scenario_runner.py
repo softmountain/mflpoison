@@ -173,7 +173,7 @@ def _config(root):
                 "aggregator": {"name": "weighted_mean"},
             },
             "evaluation": {"metrics": ["accuracy"], "evaluate_test": True},
-            "results": {"root_dir": str(root)},
+            "artifact": {"root_dir": str(root)},
         }
     )
 
@@ -194,7 +194,7 @@ class ScenarioRunnerTest(unittest.TestCase):
                     adapter=_RandomModelAdapter(),
                     client_trainer=_ClientTrainer(),
                     aggregator=WeightedMean(),
-                    results_dir=root,
+                    artifact_dir=root,
                 ).run()
                 snapshots.append(result.initial_snapshot)
 
@@ -369,14 +369,15 @@ class ScenarioRunnerTest(unittest.TestCase):
                 summary["branch_schedule"],
                 [list(row) for row in result.branch_schedule],
             )
-            self.assertTrue((root / "run_info.json").is_file())
-            manifest = json.loads((root / "run_info.json").read_text(encoding="utf-8"))
+            self.assertTrue((root / "run_manifest.json").is_file())
+            manifest = json.loads((root / "run_manifest.json").read_text(encoding="utf-8"))
             self.assertEqual(manifest["schema_version"], 2)
+            self.assertEqual(manifest["status"], "completed")
             self.assertIn("torch_cuda_version", manifest["runtime"])
             self.assertIn("gpu_devices", manifest["runtime"])
             self.assertIn("argv", manifest["runtime"])
             self.assertTrue((root / "checkpoints" / "m_star.pt").is_file())
-            self.assertTrue((root / "rounds.pt").is_file())
+            self.assertTrue((root / "round_records.pt").is_file())
             self.assertTrue(
                 list((root / "generators" / "attack" / "a").glob("*.json"))
             )

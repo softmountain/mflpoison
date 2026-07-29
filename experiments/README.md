@@ -13,11 +13,11 @@ python -m mflpoison.runner \
 
 ```bash
 bash scripts/run_experiments.sh \
-  0:configs/experiments/poison_strength/clients1_poison20_gen20.yaml:42 \
-  1:configs/experiments/poison_strength/clients2_poison50_gen20.yaml:42
+  0:configs/experiments/ucf101_dtm_poison_strength/malicious-clients-1_poison-20pct_generator-epochs-20.yaml:42 \
+  1:configs/experiments/ucf101_dtm_poison_strength/malicious-clients-2_poison-50pct_generator-epochs-20.yaml:42
 ```
 
-runner 结果统一写入 `results/YYYY-MM-DD/<config-name>/<time>_seed-N/`，批处理状态写入 `results/batches/YYYY-MM-DD/<time>/status.tsv`。
+runner 产物统一写入 `artifact/<config-group>/<config-name>/<YYYYMMDD-HHMMSS>_seed-N_git-<sha>/`，批处理状态写入 `artifact/batches/<YYYYMMDD-HHMMSS>/status.tsv`。直接位于 `configs/experiments/` 的配置省略 config-group 层。
 
 ## 旧 checkpoint 评估
 
@@ -40,14 +40,14 @@ python experiments/generate_synthetic.py \
   --generator dtm --checkpoint path/to/checkpoint.pt \
   --num_samples 5100 --target_strategy balanced \
   --attack_mode clean_label \
-  --output results/manual/dtm-synthetic.pt
+  --output artifact/manual/dtm-synthetic.pt
 
 python experiments/evaluate_tstr.py \
-  --synthetic_data results/manual/dtm-synthetic.pt -- \
+  --synthetic_data artifact/manual/dtm-synthetic.pt -- \
   --data_dir fed_multimodal/results --alpha 1.0 --fold 1 \
   --num_epochs 100
 ```
 
 手工生成文件使用 canonical `SyntheticBatch` schema。TSTR 在同一 FedMM `dev` 上选模，模型确定后只在 `test` 上评估一次。
 
-这些兼容工具的输出放在 `results/manual/` 或 `results/legacy_evaluation/`，不会合并进生产 runner 的 `summary.json`。完整调用关系和结果结构见 [当前流程与结果结构](../docs/CURRENT_PIPELINE_STRUCTURE.md)。
+这些兼容工具的输出放在 `artifact/manual/` 或 `artifact/legacy_evaluation/`，不会合并进生产 runner 的 `summary.json`。完整调用关系和产物结构见 [当前流程与结果结构](../docs/CURRENT_PIPELINE_STRUCTURE.md)。

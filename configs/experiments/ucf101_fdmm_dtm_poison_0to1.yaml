@@ -102,5 +102,5 @@ evaluation:
   evaluate_attack: true
   options: {}
 
-results:
-  root_dir: results
+artifact:
+  root_dir: artifact
