@@ -37,7 +37,7 @@ def parse_args():
     add_partition_arguments(parser)
     parser.add_argument(
         "--output_dir",
-        default="artifacts/legacy_evaluation/dtm",
+        default="results/legacy_evaluation/dtm",
     )
     parser.add_argument("--num_batches", type=int, default=20)
     parser.add_argument("--seed", type=int, default=42)

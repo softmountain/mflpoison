@@ -220,6 +220,8 @@ results/YYYY-MM-DD/<config-name>/HH-MM-SS_seed-N/
 └── rounds.pt                  # 所有阶段的逐轮记录
 ```
 
+`results/` 及其日期、实验和运行子目录均由入口按需创建，不需要在仓库中预建。smoke 或测试结果验收后，应同时删除结果、缓存和已经为空的父目录。
+
 显式 `--run-dir` 时使用指定目录；批处理脚本还会把 stdout/stderr 写入该目录的 `train.log`。
 
 结果分析以三类文件为主：
@@ -265,7 +267,7 @@ fedpoi/
 ├── experiments/               # 旧 checkpoint 人工分析工具
 ├── tests/                     # 自动化测试
 ├── docs/                      # 当前结构说明
-└── results/                   # 实验结果，不进入 Git
+└── results/                   # 运行时按需创建，不进入 Git
 ```
 
 生产训练不要从 `experiments/` 另建入口，也不要为超参数组合复制 Python 文件。一次实验应由一个语义明确的 YAML 配置和一个独立、可检索的结果目录对应。

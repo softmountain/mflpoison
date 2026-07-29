@@ -57,7 +57,7 @@ def parse_args():
     parser.add_argument('--video_feat', type=str, default='mobilenet_v2')
 
     parser.add_argument('--num_batches', type=int, default=30)
-    parser.add_argument('--output_dir', type=str, default='artifacts/legacy_evaluation/teacher_guided')
+    parser.add_argument('--output_dir', type=str, default='results/legacy_evaluation/teacher_guided')
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--no_tsne', action='store_true', help='Skip t-SNE visualization')
     parser.add_argument('--no_extra_metrics', action='store_true', help='Skip FID/MMD/domain classifier metrics')

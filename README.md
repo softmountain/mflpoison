@@ -78,10 +78,12 @@ fed_multimodal/results/feature/video/mobilenet_v2/ucf101/alpha10/fold1/
 安装与测试：
 
 ```bash
-pip install -r requirements.txt
 pip install -e .
+pip install -e ".[test]"
 pytest -q
 ```
+
+分析工具使用 `pip install -e ".[analysis]"`，旧特征提取和 checkpoint 评估工具使用 `pip install -e ".[legacy-features]"`。`requirements.txt` 保留 BJMU 核心运行环境的固定版本，完整服务器环境参考 `requirements/lock-py39-cu117.txt`。
 
 BJMU 当前环境可直接运行：
 
@@ -92,7 +94,7 @@ conda run -p /mnt/sda/mtzh/xp/envs/fedpoi-py39 \
 
 ## 结果目录
 
-未指定 `--run-dir` 时，入口自动使用：
+`results/` 不需要预先创建。未指定 `--run-dir` 时，入口按需创建：
 
 ```text
 results/YYYY-MM-DD/<config-name>/HH-MM-SS_seed-N/
@@ -144,6 +146,6 @@ results/batches/YYYY-MM-DD/HH-MM-SS/status.tsv
 - `fed_multimodal/`：UCF101 数据、模型、FedAvg 与生成器兼容实现；
 - `experiments/`：旧 checkpoint 的人工分析工具；
 - `tests/`：自动化测试；
-- `results/`：运行结果，不进入 Git。
+- `results/`：运行时按需创建的结果，不进入 Git；清理最后一次临时运行后不保留空目录。
 
 本项目仅用于防御性安全研究和多模态联邦学习鲁棒性评估。

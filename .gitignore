@@ -33,12 +33,9 @@ ENV/
 *.pkl
 *.npy
 *.npz
-# 结果目录内容（保留目录结构，不传具体产物）
+# 结果目录内容
 results/
 fed_multimodal/results/
-fed_multimodal/Local/results/
-output/
-/artifacts/
 # 数据集
 datasets/
 data/*.zip
