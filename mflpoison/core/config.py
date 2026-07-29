@@ -3,13 +3,6 @@ from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Sequence, Tuple, Type, TypeVar
 
-from .hashing import canonical_json, mapping_hash
-
-
-def config_hash(data: Mapping[str, Any], length: int = 12) -> str:
-    return mapping_hash(data, length=length)
-
-
 def load_config(path) -> Dict[str, Any]:
     path = Path(path)
     suffix = path.suffix.lower()
@@ -114,9 +107,7 @@ class FederationConfig:
     convergence_mode: str = "max"
     patience: Optional[int] = None
     min_delta: float = 0.0
-    resume_from: Optional[str] = None
     m_star_path: Optional[str] = None
-    m_star_snapshot_hash: Optional[str] = None
     branches: Tuple[str, ...] = ()
     options: Mapping[str, Any] = field(default_factory=dict)
 
@@ -143,16 +134,8 @@ class FederationConfig:
             raise ValueError("federation.convergence_mode must be 'min' or 'max'")
         if self.patience is not None and int(self.patience) < 1:
             raise ValueError("federation.patience must be positive")
-        if (self.m_star_path is None) != (self.m_star_snapshot_hash is None):
-            raise ValueError(
-                "federation.m_star_path and m_star_snapshot_hash must be set together"
-            )
         if self.m_star_path is not None and not str(self.m_star_path):
             raise ValueError("federation.m_star_path cannot be empty")
-        if self.m_star_snapshot_hash is not None and not str(
-            self.m_star_snapshot_hash
-        ):
-            raise ValueError("federation.m_star_snapshot_hash cannot be empty")
         allowed_branches = {"clean", "attack", "defended"}
         unknown_branches = sorted(set(self.branches) - allowed_branches)
         if unknown_branches:
@@ -264,18 +247,12 @@ class EvaluationConfig:
 
 
 @dataclass(frozen=True)
-class ArtifactsConfig:
-    root_dir: str = "artifacts"
-    save_every_round: bool = True
-    manifest_name: str = "manifest.json"
-    snapshot_name: str = "global_snapshot.pt"
-    generator_dir: str = "generators"
-    round_records_name: str = "round_records.pt"
-    options: Mapping[str, Any] = field(default_factory=dict)
+class ResultsConfig:
+    root_dir: str = "results"
 
     def __post_init__(self):
         if not self.root_dir:
-            raise ValueError("artifacts.root_dir cannot be empty")
+            raise ValueError("results.root_dir cannot be empty")
 
 
 SectionType = TypeVar("SectionType")
@@ -302,7 +279,7 @@ class ScenarioConfig:
     attack: AttackConfig
     defense: DefenseConfig
     evaluation: EvaluationConfig
-    artifacts: ArtifactsConfig
+    results: ResultsConfig
 
     SECTION_TYPES = {
         "dataset": DatasetConfig,
@@ -312,7 +289,7 @@ class ScenarioConfig:
         "attack": AttackConfig,
         "defense": DefenseConfig,
         "evaluation": EvaluationConfig,
-        "artifacts": ArtifactsConfig,
+        "results": ResultsConfig,
     }
 
     @classmethod
@@ -353,10 +330,33 @@ class ScenarioConfig:
             raise ValueError("the defended branch requires defense.enabled=true")
         return selected
 
-    @property
-    def content_hash(self) -> str:
-        return config_hash(self.to_dict(), length=64)
+def _merge_config(base: Dict[str, Any], overrides: Mapping[str, Any]) -> Dict[str, Any]:
+    merged = dict(base)
+    for key, value in overrides.items():
+        if isinstance(value, Mapping) and isinstance(merged.get(key), Mapping):
+            merged[key] = _merge_config(dict(merged[key]), value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _load_scenario_mapping(path, stack=()) -> Dict[str, Any]:
+    path = Path(path).resolve()
+    if path in stack:
+        raise ValueError(f"recursive base_config reference: {path}")
+    data = load_config(path)
+    if "base_config" not in data:
+        return data
+    if set(data) != {"base_config", "overrides"}:
+        raise ValueError(
+            "derived scenario config must contain only base_config and overrides"
+        )
+    base_path = Path(str(data["base_config"]))
+    if not base_path.is_absolute():
+        base_path = path.parent / base_path
+    base = _load_scenario_mapping(base_path, stack + (path,))
+    return _merge_config(base, _mapping(data["overrides"], "overrides"))
 
 
 def load_scenario_config(path) -> ScenarioConfig:
-    return ScenarioConfig.from_mapping(load_config(path))
+    return ScenarioConfig.from_mapping(_load_scenario_mapping(path))

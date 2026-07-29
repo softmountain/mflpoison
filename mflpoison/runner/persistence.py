@@ -8,10 +8,8 @@ from typing import Any, Mapping, Sequence
 from mflpoison.artifacts import (
     load_round_record_bundle,
     save_generator_artifact,
-    save_round_record,
     save_round_record_bundle,
 )
-from mflpoison.core.hashing import file_sha256
 from mflpoison.core.types import GeneratorArtifact, GlobalSnapshot
 from mflpoison.federated import TrainingResult
 
@@ -44,21 +42,16 @@ def write_json(payload: Mapping[str, Any], path: Path) -> Path:
     return path
 
 
-class ScenarioArtifactStore:
-    """Own all scenario outputs below a configured artifact root."""
+class ResultStore:
+    """Write the stable files inside one human-readable run directory."""
 
-    def __init__(self, config, artifact_root: Path, *, config_hash: str):
+    def __init__(self, config, run_dir: Path):
         self.config = config
-        self.artifact_root = Path(artifact_root)
-        self.config_hash = str(config_hash)
+        self.run_dir = Path(run_dir)
         self._seen_generator_artifacts = set()
 
     def persist_records(self, phase: str, records: Sequence[Any]) -> None:
-        records_root = self.artifact_root / "round_records" / phase
-        if self.config.artifacts.save_every_round:
-            for index, record in enumerate(records):
-                save_round_record(record, records_root / f"round-{index:04d}.pt")
-        bundle_path = self.artifact_root / self.config.artifacts.round_records_name
+        bundle_path = self.run_dir / "rounds.pt"
         phases = {}
         if bundle_path.exists():
             phases = load_round_record_bundle(bundle_path)
@@ -74,12 +67,10 @@ class ScenarioArtifactStore:
         checkpoint_path = Path(artifact.checkpoint_path)
         if not checkpoint_path.is_file():
             raise FileNotFoundError(str(checkpoint_path))
-        if file_sha256(checkpoint_path) != artifact.checkpoint_hash:
-            raise ValueError("generator checkpoint hash does not match its artifact")
         self._seen_generator_artifacts.add(identity)
         path = (
-            self.artifact_root
-            / self.config.artifacts.generator_dir
+            self.run_dir
+            / "generators"
             / phase
             / artifact.client_id
             / f"{artifact.content_hash}.json"
@@ -99,7 +90,6 @@ class ScenarioArtifactStore:
     ) -> Path:
         payload = {
             "schema_version": 2,
-            "config_hash": self.config_hash,
             "initial_snapshot_hash": initial_snapshot.content_hash,
             "m_star": {
                 "snapshot_hash": m_star.content_hash,
@@ -184,7 +174,7 @@ class ScenarioArtifactStore:
                     payload["branches"][name][
                         "delta_asr_percentage_points"
                     ] = delta_asr * 100.0
-        return write_json(payload, self.artifact_root / "summary.json")
+        return write_json(payload, self.run_dir / "summary.json")
 
     def _attack_exposure(
         self,

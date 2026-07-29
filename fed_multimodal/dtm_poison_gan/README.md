@@ -6,7 +6,7 @@
 
 ```bash
 python -m mflpoison.runner \
-  --config configs/scenarios/ucf101_generative_poison_defense.yaml
+  --config configs/experiments/ucf101_fdmm_dtm_poison_0to1_defense.yaml
 ```
 
 旧 checkpoint 评估：

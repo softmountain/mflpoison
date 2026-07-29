@@ -3,10 +3,7 @@ import unittest
 import torch
 
 from fed_multimodal.poison_gan.metrics import classification_metrics
-from mflpoison.evaluation import (
-    kplus1_classification_metrics,
-    targeted_classification_metrics,
-)
+from mflpoison.evaluation import targeted_classification_metrics
 
 
 class MetricsTest(unittest.TestCase):
@@ -19,9 +16,6 @@ class MetricsTest(unittest.TestCase):
         self.assertAlmostEqual(metrics["discriminator_escape_rate"], 0.5)
         self.assertAlmostEqual(metrics["joint_target_escape_rate"], 0.5)
         self.assertEqual(metrics["target_success_rate"], metrics["target_among_real_rate"])
-
-        explicit = kplus1_classification_metrics(logits, targets, 2, 2)
-        self.assertAlmostEqual(explicit["joint_target_escape_rate"], 0.5)
 
     def test_targeted_classification_metrics_report_direction_and_utility(self):
         metrics = targeted_classification_metrics(

@@ -289,20 +289,13 @@ class TSTRBoundaryTest(unittest.TestCase):
 
 
 class LegacyEvaluationCLITest(unittest.TestCase):
-    def test_new_modules_and_old_wrappers_support_help(self):
+    def test_evaluation_modules_support_help(self):
         modules = (
             "teacher_guided",
             "kplus1",
             "dtm",
             "temporal_adaptive",
             "tstr",
-        )
-        wrappers = (
-            "eval_local_gan_quality.py",
-            "eval_poison_gan.py",
-            "eval_dtm_poison_gan.py",
-            "eval_temporal_adaptive_gan.py",
-            "train_synthetic.py",
         )
         commands = [
             [
@@ -313,14 +306,6 @@ class LegacyEvaluationCLITest(unittest.TestCase):
             ]
             for module in modules
         ]
-        commands.extend(
-            [
-                sys.executable,
-                str(ROOT / "fed_multimodal/Local" / wrapper),
-                "--help",
-            ]
-            for wrapper in wrappers
-        )
         commands.extend(
             [sys.executable, "-m", module, "--help"]
             for module in (

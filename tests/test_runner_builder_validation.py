@@ -1,22 +1,22 @@
 import copy
-import subprocess
-import sys
 import unittest
 from pathlib import Path
 
-from mflpoison.core.config import ScenarioConfig, load_config
+from mflpoison.core.config import ScenarioConfig, load_scenario_config
 from mflpoison.runner import build_default_runner
-from mflpoison.runner.scenario import (
-    build_default_runner as legacy_build_default_runner,
-)
 
 
 ROOT = Path(__file__).resolve().parents[1]
-TEMPLATE = ROOT / "configs" / "scenarios" / "ucf101_generative_poison_defense.yaml"
+TEMPLATE = (
+    ROOT
+    / "configs"
+    / "experiments"
+    / "ucf101_fdmm_dtm_poison_0to1_defense.yaml"
+)
 
 
 def scenario_config(mutator=None):
-    payload = copy.deepcopy(load_config(TEMPLATE))
+    payload = copy.deepcopy(load_scenario_config(TEMPLATE).to_dict())
     if mutator is not None:
         mutator(payload)
     return ScenarioConfig.from_mapping(payload)
@@ -97,38 +97,9 @@ class RunnerBuilderValidationTest(unittest.TestCase):
         )
         manager = runner.generator_lifecycle_factory("base")
         trainer = manager.trainer_factory("client-0")
-        expected = Path(runner.artifact_root) / "generator_checkpoints" / "base"
+        expected = Path(runner.run_dir) / "checkpoints" / "generators" / "base"
         self.assertEqual(trainer.variant, "dtm")
         self.assertEqual(trainer.output_dir, expected)
-
-    def test_historical_scenario_builder_import_remains_compatible(self):
-        runner = legacy_build_default_runner(scenario_config())
-        self.assertEqual(runner.config.dataset.name, "ucf101")
-
-    def test_compatibility_entry_points_can_import_the_runner(self):
-        scripts = (
-            "experiments/run_scenario.py",
-            "experiments/train_generator.py",
-            "fed_multimodal/Local/train_dtm_poison_gan.py",
-            "fed_multimodal/Local/train_temporal_adaptive_gan.py",
-        )
-        for script in scripts:
-            with self.subTest(script=script):
-                completed = subprocess.run(
-                    [sys.executable, str(ROOT / script), "--help"],
-                    cwd=str(ROOT),
-                    text=True,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    check=False,
-                )
-                self.assertEqual(
-                    completed.returncode,
-                    0,
-                    msg=completed.stdout + completed.stderr,
-                )
-                self.assertIn("--config", completed.stdout)
-
 
 if __name__ == "__main__":
     unittest.main()

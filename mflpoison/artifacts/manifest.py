@@ -8,8 +8,6 @@ from typing import Any, Dict, Mapping, Optional
 
 import torch
 
-from mflpoison.core.config import config_hash
-
 
 def _git_output(args, cwd: Optional[Path] = None) -> Optional[str]:
     try:
@@ -82,14 +80,10 @@ def build_manifest(
         "schema_version": 2,
         "experiment_id": str(experiment_id),
         "created_at": datetime.now(timezone.utc).isoformat(),
-        "config_hash": config_hash(config),
         "config": dict(config),
         "seed": int(seed),
         "git_commit": _git_output(["rev-parse", "HEAD"], cwd),
         "git_branch": _git_output(["branch", "--show-current"], cwd),
-        "git_status_short": (
-            _git_output(["status", "--short"], cwd) or ""
-        ).splitlines(),
         "runtime": _runtime_metadata(),
     }
     if extra:

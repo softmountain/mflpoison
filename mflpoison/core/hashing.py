@@ -1,8 +1,5 @@
 import hashlib
 import json
-import math
-from dataclasses import fields, is_dataclass
-from enum import Enum
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -65,66 +62,3 @@ def file_sha256(path) -> str:
                 break
             digest.update(chunk)
     return digest.hexdigest()
-
-
-def _semantic_value(value: Any):
-    if value is None or isinstance(value, (bool, int, str)):
-        return value
-    if isinstance(value, float):
-        if math.isnan(value):
-            encoded = "nan"
-        elif value == math.inf:
-            encoded = "+inf"
-        elif value == -math.inf:
-            encoded = "-inf"
-        else:
-            encoded = value.hex()
-        return {"__float__": encoded}
-    if isinstance(value, torch.Tensor):
-        return {"__tensor__": tensor_map_hash({"value": value})}
-    if isinstance(value, Path):
-        return {"__path__": str(value)}
-    if isinstance(value, Enum):
-        return {
-            "__enum__": type(value).__module__ + "." + type(value).__qualname__,
-            "value": _semantic_value(value.value),
-        }
-    if is_dataclass(value) and not isinstance(value, type):
-        return {
-            "__dataclass__": type(value).__module__ + "." + type(value).__qualname__,
-            "fields": {
-                item.name: _semantic_value(getattr(value, item.name))
-                for item in fields(value)
-            },
-        }
-    if isinstance(value, Mapping):
-        normalized = {}
-        for key, item in value.items():
-            if not isinstance(key, str):
-                raise TypeError("semantic hash mapping keys must be strings")
-            normalized[key] = _semantic_value(item)
-        return {"__mapping__": normalized}
-    if isinstance(value, (list, tuple)):
-        return {"__sequence__": [_semantic_value(item) for item in value]}
-    if isinstance(value, (set, frozenset)):
-        items = [_semantic_value(item) for item in value]
-        return {
-            "__set__": sorted(
-                items,
-                key=lambda item: json.dumps(
-                    item, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-                ),
-            )
-        }
-    raise TypeError(
-        "unsupported semantic hash value: "
-        + type(value).__module__
-        + "."
-        + type(value).__qualname__
-    )
-
-
-def semantic_hash(value: Any) -> str:
-    """Hash nested runtime state by value instead of pickle representation."""
-
-    return mapping_hash({"payload": _semantic_value(value)})

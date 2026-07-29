@@ -55,7 +55,7 @@ def valid_config():
             "aggregator": {"name": "weighted_mean"},
         },
         "evaluation": {"metrics": ["accuracy", "attack_success_rate"]},
-        "artifacts": {"root_dir": "artifacts/run"},
+        "results": {"root_dir": "results/test-run"},
     }
 
 
@@ -75,7 +75,7 @@ class ScenarioConfigTest(unittest.TestCase):
             yaml_path = root / "scenario.yaml"
             yaml_path.write_text(yaml.safe_dump(config), encoding="utf-8")
             from_yaml = load_scenario_config(yaml_path)
-            self.assertEqual(from_yaml.content_hash, loaded.content_hash)
+            self.assertEqual(from_yaml.to_dict(), loaded.to_dict())
 
     def test_rejects_unknown_top_level_and_nested_fields(self):
         config = valid_config()
@@ -99,6 +99,19 @@ class ScenarioConfigTest(unittest.TestCase):
         config["generator"]["options"] = {"lambda_diversity": 0.2}
         loaded = ScenarioConfig.from_mapping(config)
         self.assertEqual(loaded.generator.options["lambda_diversity"], 0.2)
+
+    def test_derived_config_only_overrides_experiment_parameters(self):
+        config = load_scenario_config(
+            ROOT
+            / "configs"
+            / "experiments"
+            / "poison_strength"
+            / "clients2_poison50_gen20.yaml"
+        )
+        self.assertEqual(config.attack.malicious_clients, ("0", "1"))
+        self.assertEqual(config.attack.poison_ratio, 0.5)
+        self.assertEqual(config.generator.epochs, 20)
+        self.assertEqual(config.results.root_dir, "results")
 
     def test_federation_supports_two_phase_round_counts(self):
         config = valid_config()
@@ -128,44 +141,36 @@ class ScenarioConfigTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unsupported branch"):
             ScenarioConfig.from_mapping(config)
 
-    def test_reused_m_star_requires_path_and_content_hash_together(self):
+    def test_reused_m_star_accepts_a_checkpoint_path(self):
         config = valid_config()
-        config["federation"]["m_star_path"] = "artifacts/base/m_star.pt"
-        with self.assertRaisesRegex(ValueError, "must be set together"):
-            ScenarioConfig.from_mapping(config)
-
-        config["federation"]["m_star_snapshot_hash"] = "snapshot-hash"
+        config["federation"]["m_star_path"] = "results/base/m_star.pt"
         loaded = ScenarioConfig.from_mapping(config)
         self.assertEqual(
             loaded.federation.m_star_path,
-            "artifacts/base/m_star.pt",
-        )
-        self.assertEqual(
-            loaded.federation.m_star_snapshot_hash,
-            "snapshot-hash",
+            "results/base/m_star.pt",
         )
 
     def test_production_configs_use_correct_zero_to_one_direction(self):
         expected = (
             (
-                "ucf101_generative_poison_defense.yaml",
+                "ucf101_fdmm_dtm_poison_0to1_defense.yaml",
                 ("clean", "attack", "defended"),
                 True,
             ),
             (
-                "ucf101_generative_poison_defense_smoke.yaml",
+                "ucf101_fdmm_dtm_poison_0to1_smoke.yaml",
                 ("clean", "attack", "defended"),
                 True,
             ),
             (
-                "ucf101_generative_poison_attack.yaml",
+                "ucf101_fdmm_dtm_poison_0to1.yaml",
                 ("clean", "attack"),
                 False,
             ),
         )
         for name, branches, defense_enabled in expected:
             with self.subTest(name=name):
-                config = load_scenario_config(ROOT / "configs" / "scenarios" / name)
+                config = load_scenario_config(ROOT / "configs" / "experiments" / name)
                 self.assertEqual(config.selected_branches, branches)
                 self.assertEqual(config.defense.enabled, defense_enabled)
                 self.assertEqual(config.attack.condition_class, 0)

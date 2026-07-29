@@ -1,0 +1,6 @@
+base_config: ucf101_fdmm_dtm_poison_0to1.yaml
+overrides:
+  federation:
+    branches: [clean, attack, defended]
+  defense:
+    enabled: true

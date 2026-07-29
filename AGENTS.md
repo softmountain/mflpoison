@@ -1,103 +1,101 @@
-# mflpoison 本地—BJMU 协作流程
+# mflpoison 本地—BJMU 协作规范
 
-## 适用范围与角色
+## 当前有效信息
 
-本文件适用于整个仓库。
-
-- 本地项目：`C:\Users\86184\Desktop\mflpoison`
+- 本地仓库：`C:\Users\86184\Desktop\mflpoison`
 - BJMU SSH 别名：`bjmu4090`
-- BJMU 项目：`/mnt/sda/mtzh/xp/fedpoi`
-- 智能体必须根据当前路径和主机确认自己的角色：位于本地项目时执行本地职责，位于 BJMU 项目时执行服务器职责。
-- 本地是需求分析、结果分析、代码审查、验收和 Git 提交端。
-- BJMU 是按本地改动方向实施代码、执行测试和正式实验的计算端。
-- 不要因为两个工作区都在 `main` 分支就假定它们已经同步；每次交接都必须核对提交哈希、工作区状态和实际配置。
-- 两端的本文件必须保持完全一致，不能分别维护会造成 Git 差异的本地版和服务器版。
+- BJMU 仓库：`/mnt/sda/mtzh/xp/fedpoi`
+- BJMU Python：`/mnt/sda/mtzh/xp/envs/fedpoi-py39/bin/python`
+- UCF101 特征根：`fed_multimodal/results`
+- 唯一生产入口：`python -m mflpoison.runner`
+- 实验配置：`configs/experiments/`
+- 多 GPU 批处理：`scripts/run_experiments.sh`
+- 结果目录：`results/YYYY-MM-DD/<config-name>/HH-MM-SS_seed-N/`
 
-## 六阶段工作流
+本地负责需求、暂存审查、验收和提交；BJMU 负责候选代码实施、测试和正式实验。环境、路径、入口或流程在批准后发生变化时，必须在同一批改动中更新两端 `AGENTS.md`；失效信息直接删除，不保留历史说明。
 
-### 1. 同步门禁
+## 日常改动流程
 
-开始新一轮工作前，本地智能体必须同时检查两端：
+### 1. 确认基线
 
-- `git rev-parse HEAD`
-- `git status --short --branch`
-- 当前实验配置、入口命令和目标 artifact 目录
-- 是否存在仍在运行的实验进程
+本地和 BJMU 分别运行：
 
-进入下一阶段前，两端应位于同一个已批准提交。若任一端有未提交改动，先识别改动来源和所有者；不得覆盖、删除或夹带无关改动，也不得把“文件内容相似”当成版本已同步。
+```bash
+git rev-parse HEAD
+git status --short
+```
 
-### 2. 本地分析并提出改动方向
+开始正式改动前，两端 HEAD 应一致，BJMU 不应有未批准的 tracked 改动，也不应有旧实验占用目标 GPU。
 
-本地智能体读取 BJMU 上的原始实验证据，包括配置、manifest、summary、逐轮记录、日志和模型/生成器元数据，然后：
+### 2. BJMU 实施并做 smoke test
 
-1. 区分实际运行配置、观测结果、推断原因和待验证假设。
-2. 对照当前代码确认指标语义和数据流，不能只根据 README 或汇总字段下结论。
-3. 向用户总结实验，并形成一次范围明确的“改动说明”交给 BJMU。
+- 按本地给出的明确范围修改，不顺手增加兼容入口、安全包装或新的 Python 变体。
+- 算法和可复用能力写入 `mflpoison/`；超参数组合只写 YAML。
+- 先运行相关单测，再用 `ucf101_fdmm_dtm_poison_0to1_smoke.yaml` 验证完整调用链。
+- smoke 输出只放在 `results/smoke/` 或明确的临时目录。确认日志后删除该次 smoke 结果、临时日志和缓存；正式实验目录不得当作测试目录。
 
-改动说明至少包含：
+### 3. 本地暂存审查
 
-- 基准提交哈希
-- 问题与证据
-- 允许修改的文件/模块
-- 预期行为和禁止改变的语义
-- 必须执行的测试或 smoke check
-- 正式实验是否获准、预期配置和成功判据
+取得 BJMU 的候选 diff 后，本地只暂存候选文件：
 
-### 3. BJMU 按方向实施
+```bash
+git add <明确文件列表>
+git diff --cached --stat
+git diff --cached
+```
 
-BJMU 智能体只实施改动说明覆盖的代码、配置和测试，不自行扩大研究范围。默认不得在服务器 `main` 上提交或推送。
+暂存区就是待审快照，不再复制一套候选目录。审查代码、配置、测试、指标语义和结果命名：
 
-服务器实施结束后应向本地提供：
+- 不通过：`git restore --staged <文件>`，说明问题并由 BJMU 修正；
+- 通过：保留暂存内容并提交；
+- 不得使用 `git add .` 夹带图片、数据、checkpoint、结果或用户无关文件。
 
-- 基准提交、服务器工作区状态
-- 修改文件列表和完整 diff
-- 已执行的测试及原始结果
-- 未解决问题、风险和任何与改动说明的偏差
+普通文本改动不计算逐文件哈希。只有二进制传输、patch 异常或两端内容确有疑问时才比较 SHA-256。
 
-在本地审查通过前，服务器修改只是候选实现，不是已批准版本，也不得据此启动昂贵的正式实验。
+### 4. 提交和同步
 
-### 4. 本地审查、验收、同步与提交
+本地提交批准的暂存内容后，将该提交同步到 BJMU。随后两端再次核对：
 
-本地智能体取得服务器候选改动后：
+```bash
+git rev-parse HEAD
+git status --short
+```
 
-1. 将候选 diff/文件安全地带回本地，同时保留本地已有且无关的用户改动。
-2. 审查实现、配置、测试、指标语义、随机性和 artifact provenance。
-3. 运行与风险相称的本地静态检查、单元测试或轻量验证。
-4. 只把审查通过的改动纳入本地工作区；发现问题则退回 BJMU 修正，不能边审查边默认接受。
-5. 在验收门禁完成后由本地完成 Git 提交；不得在审查前提交，不得自动改写历史或推送。
-6. 将已批准版本同步到 BJMU，并再次确认两端提交哈希及关键文件内容一致。
+正式实验必须基于两端相同的批准提交，且 BJMU tracked 工作区干净。不得 reset、force-push、整目录覆盖或删除无关文件。
 
-最终门禁是“两端处于同一已批准提交且服务器没有未批准的 tracked diff”，而不是仅完成了文件复制。
+## 实验约定
 
-### 5. BJMU 在批准版本上执行实验
+### 配置而不是代码变体
 
-正式实验只能在步骤 4 的批准版本上运行。启动前记录：
+- 基准实验使用完整语义配置名，例如 `ucf101_fdmm_dtm_poison_0to1.yaml`。
+- 参数变体使用 `base_config + overrides`，例如 `poison_strength/clients2_poison50_gen20.yaml`。
+- 禁止为恶意客户端数、中毒比例、generator epoch 或 seed 复制 Python 训练文件。
+- 文件名使用小写 `snake_case`，不使用 `new`、`final`、`try2`、`artifact` 等含义不清的名称。
 
-- `git rev-parse HEAD` 和 `git status --short`
-- 完整命令及展开后的配置
-- 数据划分/哈希、随机种子和恶意客户端日程
-- Python、PyTorch、CUDA/GPU 等运行环境
-- artifact、日志和 checkpoint 目录
+### 单次运行
 
-实验运行期间不得拉取代码或修改被该实验使用的 tracked 文件。结束后保留 manifest、summary、逐轮记录和日志；大型 checkpoint/结果默认留在服务器，不要未经要求加入 Git。
+```bash
+python -m mflpoison.runner \
+  --config configs/experiments/ucf101_fdmm_dtm_poison_0to1_defense.yaml \
+  --seed 42
+```
 
-### 6. 本地分析结果并与用户讨论
+入口保存 `config_resolved.yaml`、`run_info.json`、`summary.json`、`checkpoints/`、`generators/` 和逐轮记录。分析结果时报告实际提交、解析后配置、seed、完成状态和关键样本计数；计划或旧结果不能写成新实验结论。
 
-本地智能体通过只读方式检查服务器原始结果，必要时从保存的预测或快照重新计算指标。报告必须说明：
+### 多 GPU 批处理
 
-- 实际使用的提交、配置、种子和完成状态
-- clean、attack、defended 等可比基线
-- 主要指标、样本计数和跨种子不确定性
-- 失败是实现错误、配置/指标语义错误，还是经验证的实验现象
-- 下一轮建议、改动范围和验证门禁
+```bash
+PYTHON_BIN=/mnt/sda/mtzh/xp/envs/fedpoi-py39/bin/python \
+bash scripts/run_experiments.sh \
+  0:configs/experiments/poison_strength/clients1_poison20_gen20.yaml:42 \
+  1:configs/experiments/poison_strength/clients2_poison50_gen20.yaml:42
+```
 
-与用户确认下一步后，回到步骤 1，形成新的闭环；不得把尚未执行的建议写成已验证结论。
+每个作业绑定一个 `CUDA_VISIBLE_DEVICES`，日志写入各自 `train.log`；批次状态写入 `results/batches/YYYY-MM-DD/HH-MM-SS/status.tsv`。运行中不得切换提交、修改所用配置或清理正式结果。
 
-## 同步与安全规则
+## 只在异常时使用的规则
 
-- 本地审查通过的 Git 提交是 tracked 源码的最终版本依据；服务器实验 artifact 是实验事实依据。
-- 同步前后都要检查两端状态；禁止盲目整目录覆盖、`git reset --hard`、删除未跟踪结果或清理用户文件。
-- 不在实验运行中执行 `git pull`、切换分支或替换配置。
-- 服务器候选改动优先通过可审查的 diff/patch 交接；同步后用提交哈希及必要的文件哈希复核。
-- 不提交凭据、绝对私有密钥路径、数据集、大型 checkpoint 或临时渲染文件。
-- 若两端代码、配置或结果 provenance 无法确认，停止正式实验，把差异明确报告给用户。
+- 两端 diff 不一致：先比较 `git status` 和完整 diff；patch 传输先执行 `git apply --check`。
+- 网络无法同步：确认批准提交已推送；必要时使用 HTTPS 或 Git bundle，但同步后仍以 HEAD 和 tracked 状态为准。
+- 旧结果语义存疑：以当前代码、`config_resolved.yaml` 和原始逐轮记录为准。当前攻击方向为 `condition=0 / train_label=1 / victim=0 / goal=1`。
+- 结果来源不明：缺少提交、配置、seed 或完成状态的目录不用于正式对比，不补写成已验证实验。

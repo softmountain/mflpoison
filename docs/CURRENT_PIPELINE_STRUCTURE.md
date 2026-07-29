@@ -1,487 +1,271 @@
-# Fedpoi 当前架构、流程与结果结构说明
+# 当前流程、调用关系与结果结构
 
-本文是 `codex/ucf101-poison-pipeline` 当前版本的唯一权威结构说明，依据
-提交 `7a34cad` 和 2026-07-27 的实际工作区编写。它同时说明生产调用链、
-兼容边界、UCF101 输入、训练阶段、结果文件和分析口径。历史建议和重构过程
-不作为当前架构依据。
+本文按一次完整实验的实际执行顺序说明代码调用关系。当前唯一生产入口是：
 
-## 1. 当前实际状态
+```bash
+python -m mflpoison.runner \
+  --config configs/experiments/ucf101_fdmm_dtm_poison_0to1_defense.yaml
+```
 
-- 唯一完整训练入口：`python -m mflpoison.runner --config configs/scenarios/ucf101_generative_poison_defense.yaml`。
-- 当前保留 48 个 UCF101 分区特征文件，约 1.8 GB，覆盖 `alpha10/fold1` 和 `alpha50/fold1` 的音频/视频客户端、dev、test。
-- 2026-07-23 对默认 `alpha10/fold1` 的 adapter 实测通过：10 个训练客户端、`dev/test` 完整，partition hash 为 `859e3a5fa58996c5d97ae3a64243bdebb95a2e5ad288126a4a5f527934abe744`。
-- 当前 runner、旧 generator evaluator 和 TSTR 都直接读取 FedMM `alpha/fold/{client,dev,test}.pkl`；不依赖集中式 `feature.pkl` 或官方 split metadata。
-- 当前工作区已通过 120 项自动化测试、真实 `alpha10/fold1` adapter smoke 和源码树外 wheel 安装验证。
-- 旧 `fed_multimodal/Local/results`、`fed_multimodal/result`、旧日志、旧压缩包和缓存已删除，清理前约占 10 GB。
-- 2026-07-27 已在 RTX 4090 上完成当时默认场景：50 轮预训练、5 epoch DTM 和 clean/attack/defended 各 20 轮，总耗时 34 分 25 秒，峰值内存约 8.58 GiB，结果目录约 3.8 GB。该结果使用历史 `1→0` 评估方向，只能作为旧 artifact provenance，不能替代当前 `0→1` 配置的正式验证。
-- 本次 M* 位于第 46 轮，dev/test accuracy 为 92.12%/73.10%；clean、attack、defended test accuracy 分别为 74.85%、73.66%、73.20%。
-- victim class 1 到 goal class 0 的 targeted ASR 在 clean、attack、defended 分别为 21.88%、3.13%、21.88%；本次生成式攻击没有提高目标 ASR，不能据此宣称攻击有效。防御检测 precision/recall/AUROC 为 30.00%/33.33%/70.09%，也不能据此宣称防御有效。
-- 对同一批最终 snapshot 按当前正确的 `0→1` 方向重新计算后，clean、attack、
-  defended ASR 分别为 13.64%、36.36%、18.18%。因此“攻击没有提高 ASR”只适用于
-  当时错误的 `1→0` 口径，不能用于描述当前方向；这仍是旧 snapshot 的事后重算，
-  不是批准版本上的新正式实验。
-- 默认产物的 110 个 round records、resume state、5 个 snapshots 和 3 个 generator manifests/checkpoints 已完成反序列化与哈希/lineage 校验；三分支采样计划一致。
-- 本次实验在未提交工作区上运行；manifest 记录基线 commit `7a34cad`，但实际代码还包含随机初始模型播种和 generator checkpoint 绝对路径修复，解释或复现时必须保留这一差异。
-- `artifacts/legacy_reference/` 当前保留约 3.1 MB 的旧实验报告与图表作为只读参考，不属于上述统一 runner 结果。
-- Git 不保存特征、checkpoint 或实验结果；它们均由 `.gitignore` 排除。
-
-## 2. 当前生产调用链
+## 1. 总调用链
 
 ```mermaid
 flowchart TD
-    CLI["python -m mflpoison.runner"] --> Config["load_scenario_config"]
-    Config --> Builder["runner.builder.build_default_runner"]
-    Builder --> Scenario["ScenarioRunner"]
-    Scenario --> Adapter["UCF101FedMMAdapter"]
-    Scenario --> Pretrain["clean FedAvg pretraining"]
-    Pretrain --> Coordinator["FedAvgCoordinator"]
-    Coordinator --> Client["FedAvgClientTrainer / ClientFedAvg"]
-    Coordinator --> Pipeline["DefensePipeline.process"]
-    Pipeline --> Aggregate["weighted/robust aggregator"]
+    Config["configs/experiments/*.yaml"] --> CLI["mflpoison.runner.__main__"]
+    CLI --> Load["core.config.load_scenario_config"]
+    CLI --> Builder["runner.builder.build_default_runner"]
+    Builder --> Adapter["adapters.fedmm.UCF101FedMMAdapter"]
+    Builder --> ClientTrainer["adapters.fedmm.FedAvgClientTrainer"]
+    Builder --> Lifecycle["generators.GeneratorLifecycleManager"]
+    Builder --> Attack["attacks.GenerativeFeaturePoisoningStrategy"]
+    Builder --> Defense["defenses.DefensePipeline"]
+    Builder --> Scenario["runner.scenario.ScenarioRunner"]
+    Scenario --> Pretrain["clean FedAvg 预训练"]
+    Pretrain --> Coordinator["federated.FedAvgCoordinator"]
+    Coordinator --> ClientTrainer
     Pretrain --> MStar["dev-only M*"]
-    MStar --> Lifecycle["per-client GeneratorLifecycleManager"]
-    Lifecycle --> Generator["FedMMGeneratorTrainer"]
-    MStar --> Clean["clean branch"]
-    MStar --> Attack["attack branch"]
-    MStar -. "仅在 branches 选择且 defense.enabled=true" .-> Defended["defended branch"]
-    Attack --> Strategy["GenerativeFeaturePoisoningStrategy"]
-    Defended --> Strategy
-    Defended --> Pipeline
-    Clean --> Store["ScenarioArtifactStore / ResumeStore"]
-    Attack --> Store
-    Defended --> Store
+    MStar --> Generator["adapters.fedmm.FedMMGeneratorTrainer"]
+    Lifecycle --> Generator
+    MStar --> Branches["clean / attack / defended 分支"]
+    Branches --> Coordinator
+    Attack --> Coordinator
+    Coordinator --> Defense
+    Scenario --> Store["runner.persistence.ResultStore"]
+    Store --> Results["results/YYYY-MM-DD/config/time_seed-N"]
 ```
 
-这条调用链中没有使用 `mflpoison/federated/engine.py`、
-`mflpoison/attacks/schedule.py` 或 `mflpoison/attacks/injector.py`。三者仍被导出，
-用于兼容或独立单元测试，不应被理解为统一场景的第二套生产实现。
+代码职责保持单向：配置描述实验，builder 组装对象，scenario 编排阶段，coordinator 执行联邦轮次，攻击只改变恶意客户端的数据视图，防御只处理服务器收到的客户端更新。
 
-`DefensePipeline` 的服务器防御接口只接收 `ClientUpdate`，不会接收 loader、生成器
-对象或合成样本。当前 runner/coordinator 是单进程编排，不提供进程级隐私隔离：
-`ScenarioRunner` 会按客户端取得 loader、调用 lifecycle 并构造中毒视图，再把本地训练
-产生的 update 送入防御边界。生成器训练和中毒视图仍限制在单个恶意客户端 partition
-内；test 不参与 M* 选择。
+## 2. 参数设置
 
-## 3. 当前工作区结构
+### 2.1 文件
+
+| 文件 | 作用 |
+|---|---|
+| `configs/experiments/ucf101_fdmm_dtm_poison_0to1.yaml` | clean/attack 基准实验 |
+| `configs/experiments/ucf101_fdmm_dtm_poison_0to1_defense.yaml` | 增加 defended 分支 |
+| `configs/experiments/ucf101_fdmm_dtm_poison_0to1_smoke.yaml` | 最短连通性验证 |
+| `configs/experiments/poison_strength/*.yaml` | 基于主配置覆盖少量超参数 |
+| `mflpoison/core/config.py` | 配置 dataclass、严格字段检查、`base_config` 合并 |
+
+派生配置只包含：
+
+```yaml
+base_config: ../ucf101_fdmm_dtm_poison_0to1.yaml
+overrides:
+  attack:
+    malicious_client_count: 2
+    poison_ratio: 0.5
+  generator:
+    epochs: 20
+```
+
+因此实验差异留在 YAML 中，不需要为每组超参数新增 Python 文件。入口会把最终合并后的八段配置写入 `config_resolved.yaml`。
+
+### 2.2 八段配置到代码对象
+
+| 配置段 | 主要消费者 |
+|---|---|
+| `dataset` | `UCF101FedMMAdapter` |
+| `model` | adapter 模型构造与可选初始 checkpoint |
+| `federation` | `FedAvgClientTrainer`、客户端采样和分支轮数 |
+| `generator` | `FedMMGeneratorTrainer`、`GeneratorLifecycleManager` |
+| `attack` | `AttackSpec`、恶意客户端选择、生成式中毒策略 |
+| `defense` | detector、sanitizer、aggregator、`DefensePipeline` |
+| `evaluation` | dev/test、0→1 定向攻击指标 |
+| `results` | 默认结果根目录 |
+
+## 3. 程序启动
+
+`mflpoison/runner/__main__.py` 是唯一生产启动文件，依次执行：
+
+1. 解析 `--config`、可选 `--seed` 和可选 `--run-dir`；
+2. 调用 `load_scenario_config` 得到完整 `ScenarioConfig`；
+3. 用 `--seed` 同时覆盖联邦和生成器 seed；
+4. 生成本次 `run_dir` 并保存 `config_resolved.yaml`；
+5. 调用 `runner.builder.build_default_runner`；
+6. 执行 `ScenarioRunner.run()`；
+7. 输出 M* hash、`summary.json` 路径和 `run_dir`。
+
+## 4. 对象组装
+
+`mflpoison/runner/builder.py` 将静态配置实例化为运行对象：
+
+1. `UCF101FedMMAdapter`：定位 FedMM 的 audio/video 客户端、dev、test 特征，构造分类模型和评估器；
+2. `FedAvgClientTrainer`：在一个客户端的 dataloader 上执行本地训练并返回 `ClientUpdate`；
+3. clean `weighted_mean` 聚合器；
+4. 攻击开启时，创建 DTM `FedMMGeneratorTrainer`、`GeneratorLifecycleManager` 和 `GenerativeFeaturePoisoningStrategy`；
+5. 防御开启时，创建 Norm MAD/Cosine MAD detector、NormClipper、聚合器和 `DefensePipeline`；
+6. 将这些对象注入 `ScenarioRunner`。
+
+builder 只负责组装，不执行训练。
+
+## 5. 联邦学习设置与执行
+
+`mflpoison/runner/scenario.py` 的 `ScenarioRunner` 是阶段编排器：
+
+1. adapter 准备数据并暴露训练客户端；
+2. 根据 `federation.seed` 预生成 clean 预训练日程；
+3. 根据 `seed + 1` 预生成各实验分支共用的客户端日程；
+4. 创建初始全局模型；
+5. 调用 `FedAvgCoordinator.train` 完成 clean FedAvg 预训练；
+6. 只根据 dev 收敛指标选择 M*，test 不参与选模；
+7. 从同一 M* 启动配置选中的 `clean`、`attack`、`defended` 分支。
+
+`mflpoison/federated/coordinator.py` 的 `FedAvgCoordinator` 执行每一轮：
+
+```text
+全局 snapshot
+  -> 按日程选客户端
+  -> 为每个客户端取得独立 dataloader
+  -> FedAvgClientTrainer.train
+  -> ClientUpdate(delta)
+  -> DefensePipeline.process
+  -> 聚合后的下一轮 snapshot
+  -> dev 评估与 RoundRecord
+```
+
+clean 和 attack 分支也通过同一个 `DefensePipeline.process` 服务器边界；未启用防御时管线不配置异常 detector，只执行正常校验与聚合。
+
+## 6. 客户端与生成器
+
+相关文件：
+
+| 文件 | 作用 |
+|---|---|
+| `mflpoison/adapters/fedmm/ucf101.py` | 读取客户端 partition、dev、test，构造模型与评估 |
+| `mflpoison/adapters/fedmm/client.py` | 包装 FedMM 本地训练并产生 `ClientUpdate` |
+| `mflpoison/generators/lifecycle.py` | 管理每个恶意客户端的生成器训练/刷新状态 |
+| `mflpoison/adapters/fedmm/generator.py` | 调用 DTM 或 temporal 生成器训练器 |
+| `fed_multimodal/dtm_poison_gan/` | DTM 网络、损失和训练实现 |
+
+客户端数据不会先集中到一个训练集。`ScenarioRunner` 每次只向 adapter 请求当前选中的一个客户端；每个恶意客户端的生成器也只使用该客户端自己的 partition。
+
+默认 `offline_once` 生命周期会在 M* 后为每个恶意客户端训练一次生成器。生成器 checkpoint 写入：
+
+```text
+checkpoints/generators/<branch>/
+```
+
+对应的客户端、模型和训练 lineage 记录写入：
+
+```text
+generators/<branch>/<client-id>/
+```
+
+## 7. 恶意客户端中毒
+
+中毒链路由 `ScenarioRunner._run_branch` 在客户端数据边界内触发：
+
+```text
+选中恶意客户端
+  -> GeneratorLifecycleManager.ensure
+  -> 取得该客户端生成器
+  -> GenerativeFeaturePoisoningStrategy.prepare_dataloader
+  -> 生成 condition_class=0 的特征
+  -> 赋 assigned_train_label=1
+  -> replace/append 到本地数据
+  -> FedAvgClientTrainer 训练
+  -> 带中毒来源信息的 ClientUpdate
+```
+
+当前 UCF101 攻击语义是：
+
+- `condition_class = 0`；
+- `assigned_train_label = 1`；
+- `victim_eval_class = 0`；
+- `goal_prediction_class = 1`。
+
+也就是生成类 0 条件特征、按类 1 训练，并在 test 上评估 0→1 定向攻击成功率。`poison_ratio` 或 `poison_count` 决定预算，`start_round`、`end_round` 和 `every` 决定生效轮次。
+
+## 8. 服务器防御
+
+`mflpoison/defenses/pipeline.py` 的 `DefensePipeline` 只接收 `ClientUpdate` 和当前全局 snapshot，不接收客户端原始数据或生成器。处理顺序固定为：
+
+1. `UpdateValidator` 校验更新结构、基线和数值；
+2. detector 对合法更新计算异常分数；
+3. `CompositeDecisionPolicy` 给出 accept、clip 或 reject；
+4. `NormClipper` 裁剪需要处理的更新；
+5. 配置的 aggregator 聚合剩余更新；
+6. 返回决策、处理后更新、聚合结果和审计信息。
+
+防御组件位于：
+
+```text
+mflpoison/defenses/
+├── validation.py
+├── detection.py
+├── pipeline.py
+├── update_filter/norm_clipping.py
+└── robust_aggregation/
+```
+
+`defended` 分支开启完整 detector/sanitizer/aggregator 组合；clean 与 attack 分支提供没有异常检测器的正常服务器聚合基线。
+
+## 9. 评估与结果
+
+`ScenarioRunner` 在每轮使用 dev 指标追踪训练，在 M* 和各分支结束后使用 test 指标。`runner.persistence.ResultStore` 保存：
+
+```text
+results/YYYY-MM-DD/<config-name>/HH-MM-SS_seed-N/
+├── config_resolved.yaml       # 完整实际配置
+├── run_info.json              # seed、客户端、日程、运行信息
+├── summary.json               # M*、分支 test/ASR、攻击暴露、防御指标
+├── checkpoints/
+│   ├── initial.pt
+│   ├── m_star.pt
+│   ├── <branch>_last.pt
+│   └── generators/
+├── generators/                # 每客户端生成器 lineage
+└── rounds.pt                  # 所有阶段的逐轮记录
+```
+
+显式 `--run-dir` 时使用指定目录；批处理脚本还会把 stdout/stderr 写入该目录的 `train.log`。
+
+结果分析以三类文件为主：
+
+- `config_resolved.yaml`：确认实际参数；
+- `summary.json`：比较 clean、attack、defended 的效用、ASR 和检测指标；
+- `rounds.pt`：检查客户端暴露、中毒是否生效以及服务器逐轮决策。
+
+## 10. 多 GPU 批处理与监控
+
+`scripts/run_experiments.sh` 是唯一批量实验脚本。每个参数格式为：
+
+```text
+GPU:CONFIG:SEED
+```
+
+例如：
+
+```bash
+PYTHON_BIN=/mnt/sda/mtzh/xp/envs/fedpoi-py39/bin/python \
+bash scripts/run_experiments.sh \
+  0:configs/experiments/poison_strength/clients1_poison20_gen20.yaml:42 \
+  1:configs/experiments/poison_strength/clients2_poison50_gen20.yaml:42 \
+  2:configs/experiments/poison_strength/clients3_poison50_gen50.yaml:42
+```
+
+脚本对每个作业设置 `CUDA_VISIBLE_DEVICES`，调用同一个 `python -m mflpoison.runner`，并维护：
+
+```text
+results/batches/YYYY-MM-DD/HH-MM-SS/status.tsv
+```
+
+状态为 `running`、`completed` 或 `failed`，每个作业的完整日志位于自己的 `train.log`。批量运行没有另一套训练逻辑，区别仍全部来自配置文件。
+
+## 11. 目录边界
 
 ```text
 fedpoi/
-├── README.md                         # 最短使用入口
-├── pyproject.toml                    # 构建、包发现和依赖元数据
-├── setup.py                          # 旧安装工具的薄兼容入口
-├── requirements*.txt                # 核心、legacy、分析和测试依赖
-├── requirements/                    # 已验证实验环境锁文件
-├── .github/workflows/               # wheel 安装和测试 CI
-├── configs/scenarios/                # 唯一完整场景配置
-├── experiments/                      # 统一入口和旧 checkpoint 工具
-├── mflpoison/                        # 当前联邦攻防框架
-├── fed_multimodal/                   # UCF101/FedMM 最小兼容实现
-├── tests/                            # 自动化测试
-├── docs/                             # 本结构报告
-├── artifacts/                        # 历史只读参考与运行后生成结果；不进入 Git
-└── fed_multimodal/results/feature/   # 本地 UCF101 输入；不进入 Git
+├── configs/experiments/       # 完整配置和参数变体
+├── scripts/                   # 多 GPU 批处理
+├── mflpoison/                 # 当前联邦攻防实现
+├── fed_multimodal/            # 数据、模型和生成器兼容实现
+├── experiments/               # 旧 checkpoint 人工分析工具
+├── tests/                     # 自动化测试
+├── docs/                      # 当前结构说明
+└── results/                   # 实验结果，不进入 Git
 ```
 
-### 3.1 根目录文件
-
-| 文件 | 作用 |
-|---|---|
-| `.gitignore` | 排除 Python 缓存、环境、数据集、特征、checkpoint、日志和 `artifacts/`。 |
-| `README.md` | 安装、输入、统一运行命令、结果入口和旧 checkpoint 兼容命令。 |
-| `pyproject.toml` | 定义 Python 3.9/3.10、核心依赖、可选 extras，以及 `mflpoison`/`fed_multimodal` namespace package discovery。 |
-| `setup.py` | 兼容仍调用 `python setup.py` 的旧工具；实际元数据由 `pyproject.toml` 管理。 |
-| `requirements.txt` | 当前 UCF101 runner 的四项已验证核心依赖。 |
-| `requirements-legacy.txt`、`requirements-analysis.txt`、`requirements-test.txt` | 旧特征/evaluator、结果分析和测试工具的独立依赖。 |
-| `requirements/lock-py39-cu117.txt` | 当前 `poigan` Python 3.9、PyTorch 1.13、CUDA 11.7 环境的完整版本快照。 |
-| `.github/workflows/ci.yml` | 构建 wheel、核对两个顶层包、从 wheel 导入、执行 `pip check` 和全量测试。 |
-
-### 3.2 `configs/`
-
-`configs/scenarios/ucf101_generative_poison_defense.yaml` 保留完整三分支防御场景；
-`configs/scenarios/ucf101_generative_poison_attack.yaml` 是 clean/attack 筛选专用场景，
-由 `configs/sweeps/ucf101_poison_strength.yaml` 引用。两者都严格包含：
-
-- `dataset`：特征根、fold、alpha、类别数和模态形状；
-- `model`：`MMActionClassifier` 构造信息和可选初始 checkpoint；
-- `federation`：预训练/攻击轮数、客户端采样、本地 epoch、学习率、seed、dev 收敛规则和设备；
-- `generator`：DTM/temporal 变体、offline/online lifecycle、刷新间隔和训练参数；
-- `attack`：恶意客户端、预算、replace/append、四个明确标签语义和调度；
-- `defense`：检测器、sanitizer、聚合器、决策策略和可选 EWMA；
-- `evaluation`：test/攻击评估开关和允许指标名称声明；当前 `metrics` 用于合法性校验，不过滤 adapter 返回的 summary 字段；
-- `artifacts`：结果根、逐轮保存、manifest/snapshot/record 文件名。
-
-旧分片 JSON 已删除，因为当前配置加载器不组合它们，也不允许拍平覆盖。
-
-### 3.3 `experiments/`
-
-| 文件 | 作用 |
-|---|---|
-| `run_scenario.py` | `mflpoison.runner` 的脚本兼容入口。 |
-| `train_generator.py` | 兼容旧命令名，但实际要求完整场景并调用同一 runner。 |
-| `evaluate_generator.py` | 根据 generator 名称分派到保留的旧 checkpoint evaluator。 |
-| `generate_synthetic.py` | 通过统一 backend 生成 canonical `SyntheticBatch` 文件；不参与服务器主流程。 |
-| `evaluate_tstr.py` | 分派到保留的 TSTR evaluator，验证合成数据训练效用。 |
-| `_dispatch.py` | 维护 evaluator 模块映射并通过 `python -m fed_multimodal.legacy_evaluation.<variant>` 启动。 |
-| `README.md` | 说明统一入口与兼容工具。 |
-
-### 3.4 `mflpoison/core/`
-
-| 文件 | 作用 |
-|---|---|
-| `config.py` | 八段配置 dataclass、严格字段检查和 YAML/JSON 加载。 |
-| `types.py` | `GlobalSnapshot`、`ClientUpdate`、`GeneratorArtifact`、`AttackSpec`、`DefenseDecision`、`RoundRecord` 等稳定契约。 |
-| `protocols.py` | 客户端、聚合器、检测器和 sanitizer 的结构协议。 |
-| `hashing.py` | 配置、映射、tensor map 和文件 SHA-256。 |
-| `registry.py` | generator、aggregator 等命名组件注册表。 |
-| `reproducibility.py` | 独立的进程级 Python/NumPy/PyTorch 播种和 CPU `torch.Generator` helper；当前生产 runner 的 phase/client seed 在 `runner/runtime.py`，客户端隔离上下文在 FedMM client adapter。 |
-| `__init__.py` | 对外导出核心配置与类型。 |
-
-### 3.5 `mflpoison/adapters/fedmm/`
-
-| 文件 | 作用 |
-|---|---|
-| `ucf101.py` | 读取 FedMM fold/alpha/client pickle，校验音视频一一对应，建立 partition hash，构造模型和 dev/test evaluator。 |
-| `client.py` | 将旧 `ClientFedAvg` 包装为确定性本地训练，输出 CPU `ClientUpdate(delta)`。 |
-| `generator.py` | 每个恶意客户端训练 DTM/temporal 生成器，保存 teacher snapshot、checkpoint 和 lineage。 |
-| `__init__.py` | 导出三个 adapter。 |
-
-### 3.6 `mflpoison/federated/`
-
-| 文件 | 作用 |
-|---|---|
-| `sampling.py` | 用固定 seed 预生成每轮客户端计划。 |
-| `coordinator.py` | 生产联邦引擎：逐轮复制只读 snapshot、运行客户端、调用 `DefensePipeline.process`、聚合、dev 评估、patience、best snapshot、恢复并产生 `RoundRecord`；全部更新被拒绝时保留上一轮状态。 |
-| `engine.py` | 早期裸 state/full-state update 的兼容单轮引擎，仅由独立兼容测试使用；统一 runner 不调用。 |
-| `__init__.py` | 对外导出联邦组件。 |
-
-### 3.7 `mflpoison/generators/`
-
-| 文件或目录 | 作用 |
-|---|---|
-| `base.py` | 统一生成 backend 接口。 |
-| `registry.py` | generator 名称到 backend loader 的注册。 |
-| `lifecycle.py` | 每客户端隔离的 offline-once/online-refresh 状态、seed、warm-start 和 resume。 |
-| `kplus1/backends.py` | 加载 legacy、DTM 和 temporal-adaptive checkpoint 并生成 `SyntheticBatch`。 |
-| `teacher_guided/backend.py` | 加载第一代 teacher-guided checkpoint。 |
-| 各级 `__init__.py` | 注册并导出 backend。 |
-
-### 3.8 `mflpoison/attacks/` 与 `mflpoison/data/`
-
-| 文件 | 作用 |
-|---|---|
-| `client_selection.py` | 根据 seed 选择恶意客户端。 |
-| `schedule.py` | 早期独立 `AttackSchedule` 兼容类型，仅由独立测试使用；生产调度由 `AttackSpec.active()` 执行。 |
-| `labels.py` | clean-label、label-flip 和平衡目标标签构造。 |
-| `injector.py` | 早期独立注入 helper，当前无生产调用方。 |
-| `strategy.py` | 生产 `GenerativeFeaturePoisoningStrategy`：消费 lifecycle 提供的 artifact，按 `AttackSpec` 生成样本并直接构造 `MixedPoisonDataset`，统一标签、预算、replace/append 和调度；lineage 约束主要由 lifecycle 和持久化层维护。 |
-| `data/synthetic_dataset.py` | canonical synthetic dataset 和 clean/poison 混合视图。 |
-| `data/fdmm_adapter.py` | 通用 FedMM batch 到 `MultimodalBatch` 的转换。 |
-| 两个目录的 `__init__.py` | 对外导出攻击和数据 API。 |
-
-### 3.9 `mflpoison/defenses/`
-
-| 文件或目录 | 作用 |
-|---|---|
-| `validation.py` | 校验 snapshot hash、round、key、shape、dtype 和 NaN/Inf。 |
-| `detection.py` | robust norm MAD、cosine MAD 和可选 EWMA reputation。 |
-| `pipeline.py` | 固定执行 validate、score、decide、sanitize、aggregate。 |
-| `common.py` | flatten、norm、稳健中心等公共更新操作。 |
-| `registry.py` | 聚合器注册。 |
-| `update_filter/norm_clipping.py` | 单项异常更新的 norm sanitizer。 |
-| `robust_aggregation/weighted_mean.py` | 默认 FedAvg，权重使用 clean 客户端样本数。 |
-| `coordinate_median.py` | 坐标中位数聚合。 |
-| `trimmed_mean.py` | 截尾均值聚合。 |
-| `krum.py` | 可选 Krum 实验聚合。 |
-| `robust_aggregation/common.py` | 聚合输入校验和状态构造。 |
-| 各级 `__init__.py` | 导出防御组件。 |
-
-### 3.10 `mflpoison/artifacts/`、`evaluation/` 与 `training/`
-
-| 文件 | 作用 |
-|---|---|
-| `artifacts/manifest.py` | 写配置、seed、Git commit/分支/工作区状态、完整 argv、Python/PyTorch/CUDA/cuDNN、GPU/驱动、partition 及采样计划。 |
-| `artifacts/snapshot.py` | 保存/加载带内容哈希的 `GlobalSnapshot`。 |
-| `artifacts/generator.py` | 保存/加载生成器 lineage JSON 并验证 checkpoint hash。 |
-| `artifacts/round_record.py` | 保存单轮记录和多阶段 bundle，加载时重新校验契约及内容哈希。 |
-| `artifacts/synthetic.py` | 保存/加载 canonical 或 legacy 合成批次。 |
-| `evaluation/attack.py` | 独立研究指标 helper；统一 runner 的 victim-class targeted ASR 在 `ScenarioRunner._evaluate_test()` 中计算。 |
-| `evaluation/detection.py` | precision、recall、FPR、FNR、AUROC 和混淆计数。 |
-| `evaluation/intrinsic.py` | 生成特征的分布/多样性内在指标。 |
-| `training/stability/finite.py` | tensor、loss 和梯度有限性检查。 |
-| `training/stability/rnn.py` | RNN 二阶梯度稳定上下文。 |
-| 各级 `__init__.py` | 导出 artifact、评估和稳定性 API。 |
-
-### 3.11 `mflpoison/runner/`
-
-| 文件 | 作用 |
-|---|---|
-| `__main__.py` | 解析 `--config`、`--artifact-root`，构建并运行场景。 |
-| `builder.py` | 严格校验跨 section 选项，构造 FedMM adapter、客户端 trainer、生成器 lifecycle、攻击和防御组件，并加载可选初始 checkpoint。 |
-| `scenario.py` | 编排 clean pretrain、M*、每客户端生成器以及 `federation.branches` 选择的 clean/attack/defended 分支；保留旧 builder import 的薄 wrapper。 |
-| `resume.py` | 保存和恢复 versioned resume payload，并重新校验 snapshot、round record、generator artifact 和内容哈希。 |
-| `persistence.py` | 原子写入 summary，持久化逐轮记录 bundle 和 generator lineage，检查 checkpoint 文件哈希。 |
-| `runtime.py` | CPU state、有限标量指标、客户端轮次 seed 和 DataLoader/runtime 播种原语。 |
-| `__init__.py` | 导出 runner 构建和结果类型。 |
-
-### 3.12 `fed_multimodal/` 最小兼容层
-
-| 路径 | 作用 |
-|---|---|
-| `constants/` | 仅定义 UCF101 的 51 类和 MFCC/MobileNetV2 特征维度。 |
-| `dataloader/dataload_manager.py` | 只接受 UCF101，读取 `alpha/fold/client` pickle 与 simulation 配置并生成五 tensor batch。 |
-| `model/mm_models.py` | 仅保留 `MMActionClassifier` 及其卷积、RNN 和 attention 依赖；模块路径和 UCF101 state-dict 结构兼容旧 checkpoint。 |
-| `trainers/fed_avg_trainer.py` | 只接受 UCF101 multimodal batch，执行真实 FedMM 客户端 SGD/FedAvg 更新。 |
-| `trainers/evaluation.py` | UCF101 单标签分类的 acc、UAR、F1、top-5、truth/pred 等评估。 |
-| `trainers/optimizer.py` | 仅保留 `ClientFedAvg` 兼容分支仍引用的 `FedProxOptimizer`。 |
-| `generator/gan_generator.py` | teacher-guided 旧 checkpoint 模型。 |
-| `generator/eval_gan_quality.py` | teacher-guided 兼容评估。 |
-| `poison_gan/` | K+1 配置、模型、判别器扩展、loss、memory bank、metrics 和 legacy trainer。 |
-| `dtm_poison_gan/` | DTM 配置、模型、loss 和 trainer。 |
-| `temporal_adaptive_gan/` | temporal-adaptive 配置、模型、loss 和 trainer。 |
-| `legacy_evaluation/data.py` | 旧 evaluator 共用的分区安全数据层；只暴露 `test`、`dev` 或一个显式 `client_id`，不存在客户端联合视图。 |
-| `legacy_evaluation/checkpoint.py` | 集中校验 teacher-guided、K+1、DTM、temporal checkpoint schema，同时保留历史可选字段。 |
-| `legacy_evaluation/reporting.py` | 固定 evaluator seed，记录 partition/client/fold/alpha/teacher lineage，并生成不覆盖的时间戳报告路径。 |
-| `legacy_evaluation/{teacher_guided,kplus1,dtm,temporal_adaptive}.py` | 四类旧 checkpoint evaluator；默认 `test`，分析写入 `artifacts/legacy_evaluation/<variant>/`。 |
-| `legacy_evaluation/tstr.py` | 读取 canonical/legacy/early synthetic schema，在固定 FedMM `dev` 上选模并只做一次最终 `test`。 |
-| `Local/dataloader.py` | 仅重导出分区安全 data manager 的弃用 import 名称。 |
-| `Local/eval_*.py`、`Local/train_synthetic.py` | 旧文件路径的薄 wrapper；实现均在小写 `legacy_evaluation/`。 |
-| `Local/train_dtm_poison_gan.py` | DTM 旧文件名到统一 runner 的 wrapper。 |
-| `Local/train_temporal_adaptive_gan.py` | temporal 旧文件名到统一 runner 的 wrapper。 |
-| `features/` | 仅保留 UCF101 partition、simulation 和 MFCC/MobileNetV2 feature extraction；legacy 重型依赖仅在实际提取时加载。 |
-| `system.cfg` | teacher-guided evaluator 的兼容路径配置。 |
-| `version.py` | 安装包版本。 |
-
-旧 evaluator 可以读取已有 checkpoint，但不提供 centralized `full_train`。默认数据是
-FedMM `test`；训练侧质量分析必须提供 `--partition client --client-id ID`。
-弃用的 `--use_train` 只有同时提供 `--client-id` 才能使用。K+1/DTM/temporal
-evaluator 仍要求显式提供原 K 类 teacher checkpoint。teacher-guided checkpoint
-缺少历史可选 `joint_discriminator` 时，joint gap 标为 unavailable，不再用随机权重
-制造指标。
-
-### 3.13 `tests/`
-
-| 测试文件 | 覆盖内容 |
-|---|---|
-| `test_core_types.py`、`test_core_contracts.py` | snapshot/update/artifact/decision/record 不变量、哈希和错误输入。 |
-| `test_scenario_config.py` | 八段配置、未知字段和枚举校验。 |
-| `test_fedavg_equivalence.py` | 新 delta FedAvg 与旧 full-state FedAvg 数值等价。 |
-| `test_federated_engine.py` | 早期兼容引擎的裸 state/full-state update 行为；不代表生产 runner 路径。 |
-| `test_federated_coordinator.py` | 生产 coordinator 的逐轮协议、防御、全部拒绝降级和聚合行为。 |
-| `test_fedmm_client_adapter.py`、`test_fedmm_generator_adapter.py` | FedMM 客户端和每客户端生成器隔离。 |
-| `test_generator_lifecycle.py`、`test_generator_backend_rng.py` | offline/online 刷新、warm-start、seed 与 RNG 隔离。 |
-| `test_attacks.py`、`test_attack_strategy.py` | 标签方向、预算、replace/append 和调度。 |
-| `test_defenses.py`、`test_defense_pipeline.py` | 检测器、裁剪、稳健聚合、决策和检测指标。 |
-| `test_metrics.py` | 分类评估指标。 |
-| `test_scenario_runner.py` | M*、分支选择、artifact、summary、resume 和 dev/test 边界。 |
-| `test_runner_builder_validation.py` | 默认 builder、配置交叉约束和 wrapper。 |
-| `test_runner_runtime.py` | runtime seed、loader generator、CPU state 和有限标量规范化。 |
-| `test_packaging.py` | namespace package discovery，防止 wheel 再次遗漏 FedMM 兼容层。 |
-| `test_fedmm_ucf101_managers.py` | UCF101 路径、pickle、padding、partition、simulation、Namespace 初始化和 51 类噪声矩阵。 |
-| `test_fedmm_ucf101_model.py` | `MMActionClassifier` attention forward、state-dict strict reload 和 FedProx 兼容。 |
-| `test_experiment_config.py` | 保留的 evaluator dispatch 路径。 |
-| `test_legacy_evaluation.py` | FedMM test/dev/client 边界、旧参数别名、四类 checkpoint schema、三类 synthetic schema、TSTR test 边界、新旧 CLI wrapper。 |
-| `test_training_stability.py` | NaN/Inf 与 RNN 稳定保护。 |
-
-## 4. 输入特征结构
-
-默认场景 `dataset.root: fed_multimodal/results`，`DataloadManager` 拼接以下路径：
-
-```text
-fed_multimodal/results/feature/
-├── audio/mfcc/ucf101/
-│   ├── alpha10/fold1/{0..9,dev,test}.pkl
-│   └── alpha50/fold1/{0..9,dev,test}.pkl
-└── video/mobilenet_v2/ucf101/
-    ├── alpha10/fold1/{0..9,dev,test}.pkl
-    └── alpha50/fold1/{0..9,dev,test}.pkl
-```
-
-- `alpha: 1.0` 转换为目录名 `alpha10`，`alpha: 5.0` 转换为 `alpha50`；
-- `0.pkl` 至 `9.pkl` 是独立训练客户端；
-- `dev.pkl` 只用于收敛和选择 M*；
-- `test.pkl` 只用于 M* 和三条分支的最终报告；
-- 缺失模态 fallback 形状为音频 `[500, 80]`、视频 `[9, 1280]`；真实序列按 batch 内最长样本动态 padding，保留数据中可出现 10 帧视频序列；
-- adapter 对每个客户端的音视频 key、标签、顺序和长度做配对检查，并由内容身份和 simulation 设置计算 partition hash。
-- FedMM constants、manager、trainer 和旧 teacher-guided evaluator 现在显式拒绝非 `ucf101` 数据集，不再暴露已经删除的数据集分支。
-- `SimulationManager.label_noise_matrix` 为 51 类生成 seed 可复现、非负且逐行归一的稀疏转移矩阵；对角值固定为 `1 - label_noise_level`。
-
-## 5. 完整训练过程到代码和结果的映射
-
-| 阶段 | 配置 | 主要代码 | 输入 | 输出/记录 | 关键失败条件 |
-|---|---|---|---|---|---|
-| 配置加载 | 全部八段 | `core/config.py`、`runner/__main__.py` | YAML | 内存中的 `ScenarioConfig` | 未知字段、缺 section、非法枚举立即失败 |
-| 数据准备 | `dataset` | `adapters/fedmm/ucf101.py`、FedMM dataloader | client/dev/test pickle | `ClientDataBundle`、partition hash | 音视频不配对、dev/test 缺失、shape/类别不符 |
-| 初始模型 | `model` | UCF adapter、`MMActionClassifier` | 随机状态或可选 checkpoint | `snapshots/initial.pt` | 显式配置 checkpoint hash 时 hash 不匹配，或模型参数/legacy args 不匹配 |
-| 客户端计划 | `federation` | `federated/sampling.py` | client IDs、seed | manifest 中 pretrain/branch schedule | 每轮客户端数非法 |
-| clean 预训练 | `federation.pretrain_rounds` | `FedAvgCoordinator`、FedAvg client、空 detector 的协议校验 pipeline | initial snapshot、clean clients | pretrain `RoundRecord` 列表和 resume progress | update 协议、NaN/Inf、snapshot lineage 错误 |
-| M* 选择 | convergence 配置 | coordinator | 每轮 dev 指标 | `snapshots/m_star.pt`、`global_snapshot.pt` | dev 缺少 convergence metric |
-| M* 测试 | `evaluation` | adapter evaluator | M*、test loader | `summary.json.m_star.test_metrics` | test 数据缺失或模型不兼容 |
-| 基础生成器 | `generator`、`attack` | generator lifecycle、FedMM generator trainer | M*、恶意客户端自己的 loader | checkpoint、lineage JSON | client/partition/snapshot/hash 错配 |
-| clean 分支 | `attack_rounds` | coordinator | M*、clean data、branch schedule | clean records/final snapshot/test metrics | 与公共 schedule 不一致会由 resume 校验失败 |
-| attack 分支 | `attack` | attack strategy、synthetic dataset | M*、生成器、恶意客户端本地数据 | attack records/final snapshot/ASR | 预算、标签、调度或 artifact lineage 非法 |
-| defended 分支 | `defense` | validation、detectors、pipeline、aggregator | 与 attack 相同更新 | decisions、processed updates、final snapshot | 更新 schema、检测配置或聚合条件非法 |
-| 汇总 | `evaluation`、`artifacts` | runner persistence | 所选分支结果 | manifest、summary、round bundle、resume | generator artifact 持久化时校验 checkpoint hash；summary 原子写入但不重复遍历全部 checkpoint |
-
-所有被选分支从同一 M* 开始并使用完全相同的 branch schedule；差别只能来自攻击数据视图和服务器防御。`federation.branches` 未显式设置时，会依据 attack/defense 开关选择安全默认值；防御关闭时不会再隐式重复 defended。
-
-## 6. 标准结果目录
-
-`artifacts/legacy_reference/` 不属于下述标准结构，也不会被 runner 读取；其中的 `poison_attack_bundle/` 和 `fragility_exp_7.21/` 只用于追溯旧实验分析。
-
-完整运行后的默认结构为：
-
-```text
-artifacts/ucf101_generative_poison_defense/
-├── manifest.json
-├── resume_state.pt
-├── summary.json
-├── global_snapshot.pt
-├── round_records.pt
-├── snapshots/
-│   ├── initial.pt
-│   ├── m_star.pt
-│   ├── clean/final.pt
-│   ├── attack/final.pt
-│   └── defended/final.pt
-├── round_records/
-│   ├── pretrain/round-0000.pt ...
-│   ├── clean/round-0000.pt ...
-│   ├── attack/round-0000.pt ...
-│   └── defended/round-0000.pt ...
-├── generator_checkpoints/
-│   └── <phase>/<client_id>/<snapshot_hash_prefix>/
-│       ├── teacher_snapshot.pt
-│       └── dtm.pt 或 temporal_adaptive.pt
-└── generators/
-    └── <phase>/<client_id>/<generator_artifact_hash>.json
-```
-
-### 6.1 `manifest.json`
-
-记录 schema version、experiment ID、12 字符 manifest config hash、完整配置、seed、Git commit/分支/工作区状态、完整 argv、Python/PyTorch/CUDA/cuDNN、GPU/驱动、partition hash、客户端列表、恶意客户端、所选分支、pretrain schedule、branch schedule，以及运行结束后的 M* 和所选分支最终 snapshot hash。`--artifact-root` 只改变实际写盘根，manifest 中嵌入的原始 `artifacts.root_dir` 配置不会被改写；sweep 生成的 resolved config 会让两者一致。
-
-### 6.2 snapshot 文件
-
-每个 snapshot 包含 CPU `state`、round、dev metrics、`ModelSpec`、partition hash、metadata 和 content hash。`global_snapshot.pt` 是按配置文件名保存的 M* 副本；test 指标不写入 snapshot，避免参与选模。
-
-### 6.3 generator 文件
-
-- checkpoint 保存模型、优化器、epoch、训练 metrics 和 lineage；
-- lineage JSON 保存 client ID、partition hash、父 snapshot hash、variant、seed、checkpoint path/hash、trained round 和 refresh index；
-- scenario 持久化前核对 checkpoint 文件 hash；loader 会再次校验 JSON/checkpoint；
-- 新生成的 lineage JSON 使用绝对 checkpoint path，可由 `load_generator_artifact()` 独立重载并校验 checkpoint hash；
-- scenario 中合成样本只在恶意客户端 dataloader 内存视图中使用，不默认落盘；手工 `generate_synthetic.py` 的输出路径由调用者指定。
-
-### 6.4 `round_records/` 与 `round_records.pt`
-
-每个 `RoundRecord` 保存：
-
-1. round 和 base snapshot hash；
-2. 采样客户端；
-3. 原始 `ClientUpdate(delta)`，包括真实 `malicious`、`attack_active`、
-   `poison_sample_count` 和 generator artifact ID；
-4. 每客户端 norm/cosine 分数、阈值、accept/clip/reject/quarantine、原因和最终权重；
-5. 裁剪或过滤后的更新；
-6. 聚合后状态及诊断；
-7. 当轮 dev 评估。
-
-单轮文件便于审计，`round_records.pt` 是按 `pretrain` 和实际所选分支分组的完整 bundle。读取时重新执行所有 constructor 校验并核对 record hash。当前实现是在一个阶段正常返回后批量写 `round_records/<phase>/`，不是每轮即时写单轮文件；训练中的逐轮恢复依赖 `resume_state.pt` 内的 active records。
-
-### 6.5 `resume_state.pt`
-
-resume payload 使用 schema v2、64 字符配置语义 hash 和内容 hash，阶段包括
-`pretrain`、`pretrain_complete`、`base_generators`、`base_complete`、
-`branch:<name>`、`branches_complete`、`complete`。它保存 active records、best/current
-snapshot、生成器 lifecycle、分支进度和可选 EWMA reputation。
-
-`federation.resume_from: null` 时 runner 仍会把状态写到默认 artifact root 的
-`resume_state.pt`，但下次启动不会自动读取它。恢复必须显式把
-`federation.resume_from` 指向该文件；配置后，后续 load/save 都使用这个显式路径。
-
-### 6.6 `summary.json` 与结果分析
-
-`summary.json` 是主要机器可读结果：
-
-- `config_hash`：与 resume store 相同的 64 字符场景语义 hash（计算时忽略 `resume_from`），不同于 manifest 中用于展示的 12 字符 hash；
-- `m_star.dev_metrics`：选择 M* 的 dev acc/UAR/F1/loss；
-- `m_star.test_metrics`：M* 固定后第一次 test 报告；
-- `branches.<name>.dev_metrics/test_metrics`：三个最终模型指标；
-- `branches.<name>.test_metrics.attack_success_rate`：test 中 `victim_eval_class` 样本被预测为 `goal_prediction_class` 的比例；同时保存百分比、源类样本数、源类准确率/召回率、目标类假阳性率、非源类准确率和 Macro-F1；
-- `branches.<attack|defended>.delta_asr_percentage_points`：相对 clean 的 ΔASR 百分点；
-- `branches.<attack|defended>.attack_exposure`：实际含恶意客户端轮数、恶意席位、有效投毒更新和总投毒样本；
-- `branches.<name>.generator_checkpoint_hashes`：生成器 checkpoint SHA-256；
-- `branches.defended.detection_metrics`：defended 每轮决策汇总出的 precision、recall、FPR、FNR、AUROC 和 TP/FP/TN/FN；
-- `branches.<attack|defended>.clean_utility_drop`：clean 分支 test accuracy 减去对应分支 test accuracy；
-- `branches.<name>.generator_artifacts`：各恶意客户端最终使用的 artifact hash。
-
-建议分析顺序：
-
-1. 用实际所选分支的 test accuracy、UAR 和 F1 比较正常效用；
-2. 用 attack 与 defended ASR 比较攻击效果和防御收益；
-3. 用 detection metrics 判断服务器识别质量；
-4. 从逐轮 decisions 检查误报集中在哪些客户端和轮次；
-5. 从 aggregation diagnostics 检查拒绝/裁剪是否造成权重失衡；
-6. 用 manifest、snapshot、generator 和 round hash 复核实验 lineage。
-
-runner 当前不自动输出 PNG、CSV、Markdown 结论或可视化。任何人工报告必须注明所依据的 `summary.json` 和 `round_records.pt` 路径，不能把旧实验报告混入当前结果。
-
-旧 checkpoint 的手工质量分析与生产场景结果分开保存：
-
-```text
-artifacts/legacy_evaluation/
-├── teacher_guided/analysis_results.json  # 以及可选 t-SNE/分布图
-├── kplus1_legacy/analysis_results_<timestamp>.json
-├── dtm/analysis_results_<timestamp>.json
-├── temporal_adaptive/analysis_results_<timestamp>.json
-└── tstr/results_<synthetic>_<timestamp>.json
-```
-
-这些文件不会进入统一 runner 的 `summary.json`。TSTR 报告中的
-`validation_partition: dev` 和 `test_partition: test` 固定记录选择/最终评估来源。
-此 dev 定义从旧版“集中训练数据随机 10%”改为 FedMM 固定 `dev`，属于有意的
-数据边界修正，不承诺与旧 TSTR 数值等价。
-三类 K+1 evaluator 的 `meta` 记录有效 partition、client ID、alpha、fold、
-batch size、batch 数、seed 和 teacher checkpoint；加载 discriminator state 时要求
-key、shape、dtype 完全匹配，避免部分旧权重留下随机层后仍输出看似有效的指标。
-
-## 7. Offline 与 Online 生成器结果差别
-
-### `offline_once`（默认）
-
-- M* 后在 `generator_checkpoints/base/` 为每个恶意客户端训练一次；
-- attack/defended lifecycle 从同一 base state 恢复，不重新训练；
-- `generators/base` 保存原始 lineage，`generators/attack` 和 `generators/defended` 可保存引用同一 checkpoint 的阶段审计 JSON；
-- resume 保存 base artifacts 和实际所选分支的使用状态。
-
-### `online_refresh`
-
-- 仍先建立 base artifact；
-- attack 和 defended 分支按 `refresh_interval` 用当前广播 snapshot warm-start；
-- 新 checkpoint 分别写入 `generator_checkpoints/attack/` 和 `generator_checkpoints/defended/`；
-- 每次刷新产生新的父 snapshot hash、checkpoint hash、artifact hash 和 refresh index；
-- `resume_state.pt` 同时恢复 branch lifecycle、warm-start artifact 和 EWMA reputation，刷新时点不会因恢复而漂移。
-
-## 8. 当前限制与保留原则
-
-当前版本需要在解释复现性和产物时注意：
-
-- 使用外部初始 checkpoint 时可由 checkpoint hash 固定起点；未提供 checkpoint 时，runner 会在 adapter 准备和模型工厂创建随机初始权重前应用 `federation.seed`；
-- phase/client 采样、客户端本地训练、生成器 lifecycle 和 resume 均有明确 seed/状态记录，但旧 evaluator 和生成器内部仍保留各自的随机状态实现；
-- `save_every_round` 控制阶段结束后是否生成单轮审计文件，不代表每轮结束立即单独落盘；实时恢复证据是 `resume_state.pt`；
-- 当前 CI 验证 wheel、包导入和测试，但不会运行默认 50 轮 GPU 实验；上述完整结果只存在于当前本地工作区；
-- 当前 GitHub Actions 只安装 core/test 依赖，但 `test_legacy_evaluation.py` 收集时会导入需要 matplotlib 的 teacher-guided evaluator；因此本地专用环境的 101 项通过不能等价证明干净远端 CI 已通过，远端工作流状态需单独查看；
-- `FederatedEngine`、`AttackSchedule`、独立 injector 和 `core/reproducibility.py` 是保留的兼容/研究表面，不是 production runner 的调用节点。
-- 当前仅在 `DefensePipeline` 接口上实现 update-only 的服务器边界；单进程 `ScenarioRunner`/`FedAvgCoordinator` 可访问客户端 bundle 和 lifecycle，不应将其解释为操作系统或多进程级隐私隔离。
-
-### 8.1 已删除与保留原则
-
-已删除内容包括其他数据集 benchmark、旧 UCF101 独立联邦脚本、demo、集中式 GAN/毒样本训练、旧 shell 矩阵、FedRS/SCAFFOLD/旧 server loop、历史 checkpoint、合成数据、运行日志和打包文件。少量需要追溯的旧分析图与报告集中保留在 `artifacts/legacy_reference/`，不作为当前实验结果。
-
-保留内容必须至少满足一项：
-
-- 被统一 runner 直接或传递 import；
-- 用于生成当前 UCF101 输入特征；
-- 用于读取已存在的四类旧 checkpoint；
-- 验证当前核心契约和完整场景。
-
-后续实验只应把结果写入 `artifacts/<run-name>/`。不得重新在 `fed_multimodal/Local/results`、`fed_multimodal/result` 或源码目录下创建结果树。
+生产训练不要从 `experiments/` 另建入口，也不要为超参数组合复制 Python 文件。一次实验应由一个语义明确的 YAML 配置和一个独立、可检索的结果目录对应。

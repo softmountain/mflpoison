@@ -7,7 +7,6 @@ import torch
 
 from mflpoison.attacks import AttackSpec
 from mflpoison.core.config import ScenarioConfig
-from mflpoison.core.hashing import file_sha256
 from mflpoison.core.types import ModelSpec
 
 from .scenario import ScenarioRunner
@@ -28,7 +27,7 @@ def _checkpoint_state_from_payload(payload) -> Mapping[str, torch.Tensor]:
 def build_default_runner(
     config: ScenarioConfig,
     *,
-    artifact_root: Optional[Path] = None,
+    results_dir: Optional[Path] = None,
 ) -> ScenarioRunner:
     """Build the production UCF101/FedMM scenario from strict configuration."""
 
@@ -75,9 +74,6 @@ def build_default_runner(
         )
     if config.evaluation.options:
         raise ValueError("evaluation.options are not implemented in the first release")
-    if config.artifacts.options:
-        raise ValueError("artifacts.options are not implemented in the first release")
-
     allowed_dataset_options = {
         "missing_modality",
         "missing_modality_rate",
@@ -105,12 +101,8 @@ def build_default_runner(
             "unsupported federation.options: "
             + ", ".join(unknown_federation_options)
         )
-    allowed_model_options = {"checkpoint_sha256", "checkpoint_hash"}
-    unknown_model_options = sorted(set(config.model.options) - allowed_model_options)
-    if unknown_model_options:
-        raise ValueError(
-            "unsupported model.options: " + ", ".join(unknown_model_options)
-        )
+    if config.model.options:
+        raise ValueError("model.options are not implemented")
     allowed_model_kwargs = {
         "hid_size",
         "attention",
@@ -263,13 +255,15 @@ def build_default_runner(
         seed=config.federation.seed,
     )
     clean_aggregator = AGGREGATOR_REGISTRY.create("weighted_mean")
-    resolved_root = Path(config.artifacts.root_dir if artifact_root is None else artifact_root)
+    resolved_root = Path(
+        config.results.root_dir if results_dir is None else results_dir
+    )
 
     lifecycle_factory = None
     attack_strategy = None
     if config.attack.enabled:
         if config.generator.checkpoint_dir is None:
-            checkpoint_root = resolved_root / "generator_checkpoints"
+            checkpoint_root = resolved_root / "checkpoints" / "generators"
         else:
             checkpoint_root = Path(config.generator.checkpoint_dir)
             if not checkpoint_root.is_absolute():
@@ -381,11 +375,6 @@ def build_default_runner(
     initial_state = None
     if config.model.checkpoint_path:
         checkpoint_path = Path(config.model.checkpoint_path)
-        expected_hash = config.model.options.get(
-            "checkpoint_sha256", config.model.options.get("checkpoint_hash")
-        )
-        if expected_hash is not None and file_sha256(checkpoint_path) != str(expected_hash):
-            raise ValueError("model checkpoint hash does not match configuration")
         checkpoint_payload = torch.load(checkpoint_path, map_location="cpu")
         initial_state = _checkpoint_state_from_payload(checkpoint_payload)
         legacy_args = (
@@ -419,5 +408,5 @@ def build_default_runner(
         generator_lifecycle_factory=lifecycle_factory,
         attack_strategy=attack_strategy,
         defense_pipeline=defense_pipeline,
-        artifact_root=resolved_root,
+        results_dir=resolved_root,
     )

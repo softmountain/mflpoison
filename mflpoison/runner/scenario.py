@@ -24,8 +24,7 @@ from mflpoison.federated import (
     build_client_schedule_count,
 )
 
-from .persistence import ScenarioArtifactStore
-from .resume import ScenarioResumeStore
+from .persistence import ResultStore
 from .runtime import (
     client_round_seed,
     cpu_state,
@@ -58,7 +57,7 @@ class ScenarioResult:
     malicious_clients: Tuple[str, ...]
     branches: Mapping[str, BranchResult]
     m_star_test_metrics: Mapping[str, float]
-    artifact_root: Path
+    run_dir: Path
     summary_path: Path
 
 
@@ -84,7 +83,7 @@ class ScenarioRunner:
         generator_lifecycle_factory: Optional[Callable[[str], Any]] = None,
         attack_strategy=None,
         defense_pipeline=None,
-        artifact_root: Optional[Path] = None,
+        results_dir: Optional[Path] = None,
     ):
         if not isinstance(config, ScenarioConfig):
             raise TypeError("config must be a ScenarioConfig")
@@ -101,37 +100,11 @@ class ScenarioRunner:
         self.generator_lifecycle_factory = generator_lifecycle_factory
         self.attack_strategy = attack_strategy
         self.defense_pipeline = defense_pipeline
-        self.artifact_root = Path(
-            config.artifacts.root_dir if artifact_root is None else artifact_root
+        self.run_dir = Path(
+            config.results.root_dir if results_dir is None else results_dir
         )
-        self._resume_store = ScenarioResumeStore(
-            config,
-            self.artifact_root,
-            branch_result_type=BranchResult,
-        )
-        self._artifact_store = ScenarioArtifactStore(
-            config,
-            self.artifact_root,
-            config_hash=self._resume_store.config_hash,
-        )
+        self._result_store = ResultStore(config, self.run_dir)
 
-    @property
-    def _resume_path(self) -> Path:
-        return self._resume_store.path
-
-    @property
-    def _resume_config_hash(self) -> str:
-        return self._resume_store.config_hash
-
-    def _load_resume_state(self) -> Optional[Dict[str, Any]]:
-        return self._resume_store.load()
-
-    def _save_resume_state(self, **values) -> Path:
-        return self._resume_store.save(**values)
-
-    @staticmethod
-    def _progress_payload(progress) -> Dict[str, Any]:
-        return ScenarioResumeStore.progress_payload(progress)
     def run(self) -> ScenarioResult:
         seed_runtime(self.config.federation.seed)
         prepared = self.adapter.prepare()
@@ -182,39 +155,10 @@ class ScenarioRunner:
             if any(name != "clean" for name in selected_branches)
             else ()
         )
-        resume_state = self._load_resume_state()
-        if resume_state is not None:
-            saved_initial = resume_state.get("initial_snapshot")
-            if not isinstance(saved_initial, GlobalSnapshot):
-                raise TypeError("resume state is missing its initial snapshot")
-            initial_snapshot = saved_initial
-            expected_resume_values = {
-                "partition_hash": partition_hash,
-                "pretrain_schedule": pretrain_schedule,
-                "branch_schedule": branch_schedule,
-                "malicious_clients": malicious_clients,
-                "selected_branches": selected_branches,
-            }
-            for name, expected in expected_resume_values.items():
-                if resume_state.get(name) != expected:
-                    raise ValueError(f"resume state has mismatched {name}")
-
-        def save_resume(phase: str, **values):
-            return self._save_resume_state(
-                phase=phase,
-                partition_hash=partition_hash,
-                initial_snapshot=initial_snapshot,
-                pretrain_schedule=pretrain_schedule,
-                branch_schedule=branch_schedule,
-                malicious_clients=malicious_clients,
-                selected_branches=selected_branches,
-                **values,
-            )
 
         manifest_config = copy.deepcopy(self.config.to_dict())
-        manifest_config["federation"]["resume_from"] = None
         manifest = build_manifest(
-            experiment_id=self._resume_config_hash[:12],
+            experiment_id=self.run_dir.name,
             config=manifest_config,
             seed=self.config.federation.seed,
             extra={
@@ -227,15 +171,12 @@ class ScenarioRunner:
                 "m_star_source": (
                     None
                     if self.config.federation.m_star_path is None
-                    else {
-                        "path": self.config.federation.m_star_path,
-                        "snapshot_hash": self.config.federation.m_star_snapshot_hash,
-                    }
+                    else {"path": self.config.federation.m_star_path}
                 ),
             },
         )
-        write_manifest(manifest, self.artifact_root / self.config.artifacts.manifest_name)
-        save_snapshot(initial_snapshot, self.artifact_root / "snapshots" / "initial.pt")
+        write_manifest(manifest, self.run_dir / "run_info.json")
+        save_snapshot(initial_snapshot, self.run_dir / "checkpoints" / "initial.pt")
 
         pretrain_runtime_seeds = {}
 
@@ -256,100 +197,36 @@ class ScenarioRunner:
             seed_runtime(pretrain_runtime_seeds[client_id])
             return ()
 
-        resume_phase = None if resume_state is None else str(resume_state.get("phase"))
         configured_m_star = self._configured_m_star(partition_hash)
         if configured_m_star is not None:
-            if resume_phase == "pretrain":
-                raise ValueError("a reused M* cannot resume an active pretrain phase")
             pretraining = TrainingResult(
                 best_snapshot=configured_m_star,
                 final_snapshot=configured_m_star,
                 records=[],
                 stopped_early=False,
             )
-        elif resume_state is not None and resume_phase != "pretrain":
-            pretraining = resume_state["pretraining"]
         else:
-            pretrain_progress = (
-                dict(resume_state.get("active", {}))
-                if resume_phase == "pretrain"
-                else {}
-            )
-
-            def save_pretrain_progress(progress):
-                save_resume(
-                    "pretrain",
-                    active=self._progress_payload(progress),
-                )
-
-            existing_pretrain_records = list(
-                pretrain_progress.get("records", ())
-            )
             clean_coordinator = self._coordinator(partition_hash)
             pretraining = clean_coordinator.train(
-                initial_snapshot=pretrain_progress.get(
-                    "current_snapshot", initial_snapshot
-                ),
-                schedule=pretrain_schedule[len(existing_pretrain_records) :],
+                initial_snapshot=initial_snapshot,
+                schedule=pretrain_schedule,
                 data_resolver=pretrain_data,
                 evaluate_dev=self._evaluate_dev,
                 convergence=self._convergence_policy(),
                 artifact_resolver=pretrain_artifacts,
-                resume_best_snapshot=pretrain_progress.get("best_snapshot"),
-                resume_best_value=pretrain_progress.get("best_value"),
-                resume_stale_rounds=int(
-                    pretrain_progress.get("stale_rounds", 0)
-                ),
-                existing_records=existing_pretrain_records,
-                evaluate_initial=not bool(pretrain_progress),
-                on_round_complete=save_pretrain_progress,
             )
         m_star = pretraining.best_snapshot
-        save_snapshot(m_star, self.artifact_root / "snapshots" / "m_star.pt")
-        save_snapshot(
-            m_star,
-            self.artifact_root / self.config.artifacts.snapshot_name,
-        )
-        self._artifact_store.persist_records("pretrain", pretraining.records)
-        m_star_test = (
-            dict(resume_state.get("m_star_test", {}))
-            if resume_state is not None
-            and resume_phase not in {"pretrain", "pretrain_complete"}
-            else self._evaluate_test(m_star)
-        )
-        if resume_state is None or resume_phase in {"pretrain", "pretrain_complete"}:
-            save_resume(
-                "pretrain_complete",
-                pretraining=pretraining,
-                m_star_test=m_star_test,
-            )
+        save_snapshot(m_star, self.run_dir / "checkpoints" / "m_star.pt")
+        self._result_store.persist_records("pretrain", pretraining.records)
+        m_star_test = self._evaluate_test(m_star)
 
         lifecycle_state = None
         base_generator_artifacts = {}
-        resume_after_base = resume_phase in {
-            "base_complete",
-            "branches_complete",
-            "complete",
-        } or (resume_phase is not None and resume_phase.startswith("branch:"))
-        if resume_state is not None and resume_after_base:
-            lifecycle_state = resume_state.get("lifecycle_state")
-            base_generator_artifacts = dict(
-                resume_state.get("base_generator_artifacts", {})
-            )
-        elif malicious_clients:
+        if malicious_clients:
             if self.generator_lifecycle_factory is None:
                 raise ValueError("an enabled generative attack requires a lifecycle factory")
             base_manager = self.generator_lifecycle_factory("base")
-            next_client = 0
-            if resume_phase == "base_generators":
-                base_manager.load_state_dict(resume_state["base_manager_state"])
-                base_generator_artifacts = dict(
-                    resume_state.get("base_generator_artifacts", {})
-                )
-                next_client = int(resume_state.get("next_client", 0))
-            for client_index, client_id in enumerate(
-                malicious_clients[next_client:], start=next_client
-            ):
+            for client_id in malicious_clients:
                 bundle = self.adapter.get_client(client_id)
                 artifact = base_manager.ensure(
                     client_id,
@@ -359,36 +236,13 @@ class ScenarioRunner:
                     m_star.round_index,
                 )
                 base_generator_artifacts[client_id] = artifact
-                self._artifact_store.persist_generator_artifact("base", artifact)
-                save_resume(
-                    "base_generators",
-                    pretraining=pretraining,
-                    m_star_test=m_star_test,
-                    base_manager_state=copy.deepcopy(base_manager.state_dict()),
-                    base_generator_artifacts=dict(base_generator_artifacts),
-                    next_client=client_index + 1,
-                )
+                self._result_store.persist_generator_artifact("base", artifact)
             if not hasattr(base_manager, "state_dict"):
                 raise TypeError("generator lifecycle manager must support state_dict")
             lifecycle_state = copy.deepcopy(base_manager.state_dict())
-        if resume_state is None or not resume_after_base:
-            save_resume(
-                "base_complete",
-                pretraining=pretraining,
-                m_star_test=m_star_test,
-                lifecycle_state=lifecycle_state,
-                base_generator_artifacts=dict(base_generator_artifacts),
-                branches={},
-            )
 
-        branches = (
-            dict(resume_state.get("branches", {}))
-            if resume_state is not None and resume_after_base
-            else {}
-        )
+        branches = {}
         for branch_name in selected_branches:
-            if branch_name in branches:
-                continue
             use_attack = branch_name != "clean" and bool(malicious_clients)
             use_defense = branch_name == "defended" and self.config.defense.enabled
             manager = None
@@ -397,39 +251,8 @@ class ScenarioRunner:
                 if not hasattr(manager, "load_state_dict"):
                     raise TypeError(
                         "generator lifecycle manager must support load_state_dict"
-                )
+                    )
                 manager.load_state_dict(copy.deepcopy(lifecycle_state))
-            active_progress = None
-            if resume_phase == "branch:" + branch_name:
-                active_progress = dict(resume_state.get("active", {}))
-                if manager is not None:
-                    manager.load_state_dict(resume_state["branch_manager_state"])
-                reputation = getattr(self.defense_pipeline, "reputation", None)
-                reputation_state = resume_state.get("reputation_state")
-                if reputation is not None and reputation_state is not None:
-                    reputation.load_state_dict(reputation_state)
-
-            def save_branch_progress(progress, branch_name=branch_name, manager=manager):
-                reputation = getattr(self.defense_pipeline, "reputation", None)
-                save_resume(
-                    "branch:" + branch_name,
-                    pretraining=pretraining,
-                    m_star_test=m_star_test,
-                    lifecycle_state=lifecycle_state,
-                    base_generator_artifacts=dict(base_generator_artifacts),
-                    branches=dict(branches),
-                    active=self._progress_payload(progress),
-                    branch_manager_state=(
-                        None
-                        if manager is None
-                        else copy.deepcopy(manager.state_dict())
-                    ),
-                    reputation_state=(
-                        None
-                        if reputation is None
-                        else copy.deepcopy(reputation.state_dict())
-                    ),
-                )
 
             branches[branch_name] = self._run_branch(
                 branch_name,
@@ -440,19 +263,9 @@ class ScenarioRunner:
                 use_attack=use_attack,
                 use_defense=use_defense,
                 base_generator_artifacts=base_generator_artifacts,
-                resume_progress=active_progress,
-                on_round_complete=save_branch_progress,
-            )
-            save_resume(
-                "branches_complete",
-                pretraining=pretraining,
-                m_star_test=m_star_test,
-                lifecycle_state=lifecycle_state,
-                base_generator_artifacts=dict(base_generator_artifacts),
-                branches=dict(branches),
             )
 
-        summary_path = self._artifact_store.persist_summary(
+        summary_path = self._result_store.persist_summary(
             initial_snapshot,
             pretraining,
             m_star,
@@ -470,15 +283,7 @@ class ScenarioRunner:
                 for name, result in branches.items()
             },
         }
-        write_manifest(manifest, self.artifact_root / self.config.artifacts.manifest_name)
-        save_resume(
-            "complete",
-            pretraining=pretraining,
-            m_star_test=m_star_test,
-            lifecycle_state=lifecycle_state,
-            base_generator_artifacts=dict(base_generator_artifacts),
-            branches=dict(branches),
-        )
+        write_manifest(manifest, self.run_dir / "run_info.json")
         return ScenarioResult(
             initial_snapshot=initial_snapshot,
             pretraining=pretraining,
@@ -488,7 +293,7 @@ class ScenarioRunner:
             malicious_clients=malicious_clients,
             branches=branches,
             m_star_test_metrics=m_star_test,
-            artifact_root=self.artifact_root,
+            run_dir=self.run_dir,
             summary_path=summary_path,
         )
 
@@ -503,8 +308,6 @@ class ScenarioRunner:
         use_attack: bool,
         use_defense: bool,
         base_generator_artifacts: Mapping[str, GeneratorArtifact],
-        resume_progress: Optional[Mapping[str, Any]] = None,
-        on_round_complete: Optional[Callable[[Any], None]] = None,
     ) -> BranchResult:
         current_artifacts = dict(base_generator_artifacts if use_attack else {})
         if lifecycle_manager is not None and hasattr(lifecycle_manager, "artifacts"):
@@ -534,7 +337,7 @@ class ScenarioRunner:
                 snapshot.round_index,
             )
             current_artifacts[client_id] = artifact
-            self._artifact_store.persist_generator_artifact(name, artifact)
+            self._result_store.persist_generator_artifact(name, artifact)
             return self.attack_strategy.prepare_dataloader(
                 bundle,
                 artifact,
@@ -560,12 +363,9 @@ class ScenarioRunner:
             defense_pipeline=defense,
             aggregator=branch_aggregator,
         )
-        progress = dict(resume_progress or {})
-        existing_records = list(progress.get("records", ()))
-        remaining_schedule = schedule[len(existing_records) :]
         training = coordinator.train(
-            initial_snapshot=progress.get("current_snapshot", m_star),
-            schedule=remaining_schedule,
+            initial_snapshot=m_star,
+            schedule=schedule,
             data_resolver=resolve_data,
             evaluate_dev=self._evaluate_dev,
             convergence=ConvergencePolicy(
@@ -575,17 +375,11 @@ class ScenarioRunner:
                 min_delta=self.config.federation.min_delta,
             ),
             artifact_resolver=artifact_ids,
-            resume_best_snapshot=progress.get("best_snapshot"),
-            resume_best_value=progress.get("best_value"),
-            resume_stale_rounds=int(progress.get("stale_rounds", 0)),
-            existing_records=existing_records,
-            evaluate_initial=not bool(progress),
-            on_round_complete=on_round_complete,
         )
-        self._artifact_store.persist_records(name, training.records)
+        self._result_store.persist_records(name, training.records)
         save_snapshot(
             training.final_snapshot,
-            self.artifact_root / "snapshots" / name / "final.pt",
+            self.run_dir / "checkpoints" / f"{name}_last.pt",
         )
         artifacts = (
             dict(lifecycle_manager.artifacts)
@@ -631,9 +425,6 @@ class ScenarioRunner:
         if configured_path is None:
             return None
         snapshot = load_snapshot(configured_path)
-        expected_hash = str(self.config.federation.m_star_snapshot_hash)
-        if snapshot.content_hash != expected_hash:
-            raise ValueError("configured M* snapshot hash does not match its artifact")
         if snapshot.partition_hash != str(partition_hash):
             raise ValueError("configured M* belongs to a different data partition")
         if snapshot.model_spec.to_dict() != self.model_spec.to_dict():
@@ -785,15 +576,3 @@ class ScenarioRunner:
                 client_ids, count=count, seed=self.config.federation.seed
             )
         )
-
-
-def build_default_runner(
-    config: ScenarioConfig,
-    *,
-    artifact_root: Optional[Path] = None,
-) -> ScenarioRunner:
-    """Compatibility wrapper for the historical scenario module import path."""
-
-    from .builder import build_default_runner as _build_default_runner
-
-    return _build_default_runner(config, artifact_root=artifact_root)

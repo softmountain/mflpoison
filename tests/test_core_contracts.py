@@ -8,10 +8,8 @@ import torch
 from mflpoison.artifacts import (
     create_generator_artifact,
     load_generator_artifact,
-    load_round_record,
     load_round_record_bundle,
     load_snapshot,
-    save_round_record,
     save_round_record_bundle,
     save_generator_artifact,
     save_snapshot,
@@ -263,15 +261,13 @@ class CoreContractsTest(unittest.TestCase):
                 evaluation=record.evaluation,
             )
 
-    def test_round_record_and_bundle_hashes_detect_payload_tampering(self):
+    def test_round_record_and_bundle_round_trip(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            record_path = root / "record.pt"
             bundle_path = root / "records.pt"
             record = self._round_record()
-            save_round_record(record, record_path)
             save_round_record_bundle({"pretrain": [record]}, bundle_path)
-            restored = load_round_record(record_path)
+            restored = load_round_record_bundle(bundle_path)["pretrain"][0]
             self.assertEqual(restored.round_index, 4)
             self.assertTrue(restored.raw_updates[0].malicious)
             self.assertTrue(restored.raw_updates[0].attack_active)
@@ -280,19 +276,6 @@ class CoreContractsTest(unittest.TestCase):
                 load_round_record_bundle(bundle_path)["pretrain"][0].round_index,
                 4,
             )
-
-            payload = torch.load(record_path, map_location="cpu")
-            payload["record"].processed_updates[0].delta["weight"][0] = 99.0
-            torch.save(payload, record_path)
-            with self.assertRaisesRegex(ValueError, "content hash"):
-                load_round_record(record_path)
-
-            payload = torch.load(bundle_path, map_location="cpu")
-            payload["phases"]["pretrain"][0].evaluation["accuracy"] = 0.1
-            torch.save(payload, bundle_path)
-            with self.assertRaisesRegex(ValueError, "hashes"):
-                load_round_record_bundle(bundle_path)
-
 
 if __name__ == "__main__":
     unittest.main()

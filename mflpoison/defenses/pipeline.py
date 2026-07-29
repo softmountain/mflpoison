@@ -233,13 +233,6 @@ class DefensePipeline:
         )
         return self.last_result
 
-    def apply(self, updates: Sequence[Any], global_state: Any) -> Sequence[Any]:
-        """Compatibility adapter for the existing FederatedEngine filter API."""
-
-        return self.process(
-            updates, global_state, aggregator=None, run_aggregation=False
-        ).sanitized
-
     def aggregate(self, updates: Sequence[Any], global_state: Any) -> AggregationResult:
         """Run the full pipeline and return the canonical aggregation contract."""
 
