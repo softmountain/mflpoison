@@ -4,6 +4,7 @@
 
 - 本地仓库：`C:\Users\86184\Desktop\mflpoison`
 - GitHub 仓库：`https://github.com/softmountain/mflpoison.git`
+- 本地与 BJMU Git origin：`https://github.com/softmountain/mflpoison.git`；BJMU 不使用 SSH origin，也不向 GitHub 推送。
 - 唯一长期生产分支：`main`
 - BJMU SSH 别名：`bjmu4090`
 - BJMU 仓库：`/mnt/sda/mtzh/xp/fedpoi`
@@ -96,8 +97,15 @@ git diff --cached
 
 - 本地提交是唯一批准版本；审核通过后由本地推送到 GitHub `main`。
 - `main` 是唯一长期生产分支。功能分支只在确有独立开发需要时创建，合入后删除；需要保留的历史快照使用归档标签，不长期保留已合入或混合实验产物的分支。
+- 原 `temporal-adaptive-gan-evaluation` 分支保存在归档标签 `archive/temporal-adaptive-gan-evaluation-202607`；需要恢复历史时从标签读取，不重新建立长期分支。
 - 不 force-push，不改写 `main` 历史，不把原始结果、图片、checkpoint、压缩包或正式运行产物提交到 Git。
-- BJMU 不直接编辑 tracked 文件，也不保存候选 diff。测试或实验前只以 fast-forward 同步 GitHub 上的批准提交。
+- BJMU 不直接编辑 tracked 文件，不保存候选 diff，不创建候选提交，也不向 GitHub 推送。测试或实验前只执行：
+
+```bash
+git fetch --prune --tags origin
+git merge --ff-only origin/main
+```
+
 - BJMU 若存在来源不明的 tracked 改动，先停止同步并查明归属，不擅自覆盖或清理。
 - 同步完成后，本地与 BJMU 各执行一次：
 
