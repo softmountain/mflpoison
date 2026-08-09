@@ -1,6 +1,7 @@
 """Orchestrate clean, attacked, and defended branches from one M* snapshot."""
 
 import copy
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Mapping, Optional, Sequence, Tuple
@@ -24,6 +25,11 @@ from mflpoison.federated import (
     build_client_schedule_count,
 )
 
+from .canonical_clean import (
+    load_canonical_clean,
+    manifest_source_identity,
+    validate_canonical_clean,
+)
 from .persistence import ResultStore
 from .runtime import (
     client_round_seed,
@@ -106,6 +112,29 @@ class ScenarioRunner:
         self._result_store = ResultStore(config, self.run_dir)
 
     def run(self) -> ScenarioResult:
+        selected_branches = self.config.selected_branches
+        canonical_clean_path = self.config.evaluation.canonical_clean_path
+        non_clean_selected = any(
+            name in {"attack", "defended"} for name in selected_branches
+        )
+        if non_clean_selected and "clean" not in selected_branches:
+            if self.config.federation.m_star_path is None:
+                raise ValueError(
+                    "attack-only or defended-only requires federation.m_star_path"
+                )
+            if canonical_clean_path is None:
+                raise ValueError(
+                    "attack-only or defended-only requires a canonical clean baseline"
+                )
+        if canonical_clean_path is not None:
+            if not non_clean_selected:
+                raise ValueError(
+                    "canonical clean comparison requires an attack or defended branch"
+                )
+            if "clean" in selected_branches:
+                raise ValueError(
+                    "canonical clean comparison must use attack-only or defended-only branches"
+                )
         seed_runtime(self.config.federation.seed)
         prepared = self.adapter.prepare()
         if prepared is not None:
@@ -149,7 +178,6 @@ class ScenarioRunner:
             clients_per_round,
             self.config.federation.seed + 1,
         )
-        selected_branches = self.config.selected_branches
         malicious_clients = (
             self._resolve_malicious_clients(client_ids)
             if any(name != "clean" for name in selected_branches)
@@ -220,6 +248,40 @@ class ScenarioRunner:
         save_snapshot(m_star, self.run_dir / "checkpoints" / "m_star.pt")
         self._result_store.persist_records("pretrain", pretraining.records)
         m_star_test = self._evaluate_test(m_star)
+
+        if canonical_clean_path is not None:
+            canonical_clean = load_canonical_clean(Path(canonical_clean_path))
+            if "attack_source_sample_count" not in m_star_test:
+                raise ValueError(
+                    "canonical clean comparison requires attack source metrics"
+                )
+            source_count_value = float(
+                m_star_test["attack_source_sample_count"]
+            )
+            source_count = int(round(source_count_value))
+            if (
+                not math.isfinite(source_count_value)
+                or not math.isclose(
+                    source_count_value, source_count, abs_tol=1e-9
+                )
+                or source_count < 1
+            ):
+                raise ValueError(
+                    "attack_source_sample_count must be a positive integer"
+                )
+            validate_canonical_clean(
+                canonical_clean,
+                seed=self.config.federation.seed,
+                partition_hash=partition_hash,
+                m_star_hash=m_star.content_hash,
+                branch_schedule=branch_schedule,
+                victim_eval_class=self.config.attack.victim_eval_class,
+                goal_prediction_class=self.config.attack.goal_prediction_class,
+                attack_source_sample_count=source_count,
+                comparison_protocol=manifest_config,
+                source_identity=manifest_source_identity(manifest),
+            )
+            self._result_store.set_canonical_clean(canonical_clean)
 
         lifecycle_state = None
         base_generator_artifacts = {}

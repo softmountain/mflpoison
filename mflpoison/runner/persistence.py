@@ -49,6 +49,12 @@ class ResultStore:
         self.config = config
         self.run_dir = Path(run_dir)
         self._seen_generator_artifacts = set()
+        self._canonical_clean = None
+
+    def set_canonical_clean(self, payload: Mapping[str, Any]) -> None:
+        if payload.get("kind") != "canonical_clean":
+            raise ValueError("canonical clean artifact has the wrong kind")
+        self._canonical_clean = dict(payload)
 
     def persist_records(self, phase: str, records: Sequence[Any]) -> None:
         bundle_path = self.run_dir / "round_records.pt"
@@ -89,7 +95,7 @@ class ResultStore:
         branches: Mapping[str, Any],
     ) -> Path:
         payload = {
-            "schema_version": 2,
+            "schema_version": 3,
             "initial_snapshot_hash": initial_snapshot.content_hash,
             "m_star": {
                 "snapshot_hash": m_star.content_hash,
@@ -123,6 +129,44 @@ class ResultStore:
                 for name, result in branches.items()
             },
         }
+        canonical_clean = self._canonical_clean
+        if canonical_clean is not None:
+            payload["canonical_clean"] = {
+                "artifact_path": canonical_clean["artifact_path"],
+                "schema_version": canonical_clean["schema_version"],
+                "seed": canonical_clean["seed"],
+                "replica_count": canonical_clean["replica_count"],
+                "partition_hash": canonical_clean["partition_hash"],
+                "m_star_snapshot_hash": canonical_clean["m_star"][
+                    "snapshot_hash"
+                ],
+                "m_star_run_dir": canonical_clean["m_star"]["run_dir"],
+                "m_star_experiment_id": canonical_clean["m_star"][
+                    "experiment_id"
+                ],
+                "m_star_source_identity": canonical_clean["m_star"][
+                    "source_identity"
+                ],
+                "attack_source_sample_count": canonical_clean[
+                    "attack_source_sample_count"
+                ],
+                "asr_canonical_clean": canonical_clean[
+                    "asr_canonical_clean"
+                ],
+                "asr_canonical_clean_pct": canonical_clean[
+                    "asr_canonical_clean_pct"
+                ],
+                "asr_population_stddev": canonical_clean[
+                    "asr_population_stddev"
+                ],
+                "asr_population_stddev_pct": canonical_clean[
+                    "asr_population_stddev_pct"
+                ],
+                "comparison_protocol": canonical_clean[
+                    "comparison_protocol"
+                ],
+                "source_identity": canonical_clean["source_identity"],
+            }
         for name in ("attack", "defended"):
             if name in branches:
                 payload["branches"][name]["attack_exposure"] = (
@@ -132,12 +176,12 @@ class ResultStore:
                 )
 
         clean_result = branches.get("clean")
-        if clean_result is not None:
-            clean_metrics = clean_result.test_metrics
-            for name, result in branches.items():
-                if name == "clean":
-                    continue
-                branch_metrics = result.test_metrics
+        clean_metrics = None if clean_result is None else clean_result.test_metrics
+        for name, result in branches.items():
+            if name == "clean":
+                continue
+            branch_metrics = result.test_metrics
+            if clean_metrics is not None:
                 utility_drops = {}
                 for metric_name in (
                     "acc",
@@ -168,12 +212,86 @@ class ResultStore:
                         branch_metrics["attack_success_rate"]
                         - clean_metrics["attack_success_rate"]
                     )
-                    payload["branches"][name][
-                        "delta_attack_success_rate"
-                    ] = delta_asr
-                    payload["branches"][name][
-                        "delta_asr_percentage_points"
-                    ] = delta_asr * 100.0
+                    if canonical_clean is None:
+                        payload["branches"][name]["delta_baseline"] = "run_clean"
+                        payload["branches"][name][
+                            "delta_attack_success_rate"
+                        ] = delta_asr
+                        payload["branches"][name][
+                            "delta_asr_percentage_points"
+                        ] = delta_asr * 100.0
+                    else:
+                        payload["branches"][name][
+                            "within_run_delta_attack_success_rate"
+                        ] = delta_asr
+                        payload["branches"][name][
+                            "within_run_delta_asr_percentage_points"
+                        ] = delta_asr * 100.0
+            if canonical_clean is not None:
+                if (
+                    "attack_success_count" not in branch_metrics
+                    or "attack_source_sample_count" not in branch_metrics
+                    or "attack_success_rate" not in branch_metrics
+                ):
+                    raise ValueError(
+                        "canonical clean comparison requires attack count, source count, and rate"
+                    )
+                source_count_value = float(
+                    branch_metrics["attack_source_sample_count"]
+                )
+                source_count = int(round(source_count_value))
+                if (
+                    not math.isfinite(source_count_value)
+                    or not math.isclose(
+                        source_count_value, source_count, abs_tol=1e-9
+                    )
+                    or source_count < 1
+                ):
+                    raise ValueError(
+                        "attack_source_sample_count must be a positive integer"
+                    )
+                success_count_value = float(branch_metrics["attack_success_count"])
+                success_count = int(round(success_count_value))
+                if (
+                    not math.isfinite(success_count_value)
+                    or not math.isclose(
+                        success_count_value, success_count, abs_tol=1e-9
+                    )
+                    or not 0 <= success_count <= source_count
+                ):
+                    raise ValueError(
+                        "attack_success_count must be an integer within the source sample range"
+                    )
+                attack_asr = float(branch_metrics["attack_success_rate"])
+                if (
+                    not math.isfinite(attack_asr)
+                    or not 0.0 <= attack_asr <= 1.0
+                    or not math.isclose(
+                        attack_asr, success_count / source_count, abs_tol=1e-9
+                    )
+                ):
+                    raise ValueError("attack success count and rate are inconsistent")
+                if source_count != int(
+                    canonical_clean["attack_source_sample_count"]
+                ):
+                    raise ValueError(
+                        "attack source sample count differs from canonical clean"
+                    )
+                baseline_asr = float(canonical_clean["asr_canonical_clean"])
+                delta_asr = attack_asr - baseline_asr
+                payload["branches"][name]["delta_baseline"] = "canonical_clean"
+                payload["branches"][name][
+                    "canonical_clean_attack_success_rate"
+                ] = baseline_asr
+                payload["branches"][name][
+                    "canonical_clean_attack_success_rate_pct"
+                ] = baseline_asr * 100.0
+                payload["branches"][name][
+                    "delta_attack_success_rate"
+                ] = delta_asr
+                payload["branches"][name][
+                    "delta_asr_percentage_points"
+                ] = delta_asr * 100.0
         return write_json(payload, self.run_dir / "summary.json")
 
     def _attack_exposure(

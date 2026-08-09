@@ -112,6 +112,7 @@ class ScenarioConfigTest(unittest.TestCase):
         self.assertEqual(config.attack.poison_ratio, 0.5)
         self.assertEqual(config.generator.epochs, 20)
         self.assertEqual(config.artifact.root_dir, "artifact")
+        self.assertEqual(config.selected_branches, ("attack",))
 
     def test_federation_supports_two_phase_round_counts(self):
         config = valid_config()
@@ -149,6 +150,33 @@ class ScenarioConfigTest(unittest.TestCase):
             loaded.federation.m_star_path,
             "artifact/base/m_star.pt",
         )
+
+    def test_m_star_only_and_canonical_clean_runtime_fields(self):
+        config = valid_config()
+        config["federation"]["m_star_only"] = True
+        loaded = ScenarioConfig.from_mapping(config)
+        self.assertEqual(loaded.selected_branches, ())
+
+        config = valid_config()
+        config["federation"]["m_star_only"] = True
+        config["federation"]["branches"] = ["clean"]
+        with self.assertRaisesRegex(ValueError, "cannot select"):
+            ScenarioConfig.from_mapping(config)
+
+        config = valid_config()
+        config["federation"]["m_star_path"] = "artifact/base/m_star.pt"
+        config["evaluation"]["canonical_clean_path"] = (
+            "artifact/batches/example/canonical_clean_seed-42.json"
+        )
+        loaded = ScenarioConfig.from_mapping(config)
+        self.assertEqual(
+            loaded.evaluation.canonical_clean_path,
+            "artifact/batches/example/canonical_clean_seed-42.json",
+        )
+
+        config["federation"]["m_star_only"] = True
+        with self.assertRaisesRegex(ValueError, "cannot reuse"):
+            ScenarioConfig.from_mapping(config)
 
     def test_production_configs_use_correct_zero_to_one_direction(self):
         expected = (

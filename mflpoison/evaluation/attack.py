@@ -84,14 +84,16 @@ def targeted_classification_metrics(
         "non_source_sample_count": float(len(non_source_pairs)),
     }
     if source_pairs:
-        attack_success_rate = sum(
+        attack_success_count = sum(
             predicted == goal_class for _, predicted in source_pairs
-        ) / len(source_pairs)
+        )
+        attack_success_rate = attack_success_count / len(source_pairs)
         source_accuracy = sum(
             predicted == victim_class for _, predicted in source_pairs
         ) / len(source_pairs)
         metrics.update(
             {
+                "attack_success_count": float(attack_success_count),
                 "attack_success_rate": float(attack_success_rate),
                 "attack_success_rate_pct": float(attack_success_rate * 100.0),
                 "source_class_accuracy": float(source_accuracy * 100.0),

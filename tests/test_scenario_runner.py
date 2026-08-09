@@ -209,6 +209,48 @@ class ScenarioRunnerTest(unittest.TestCase):
                 )
             )
 
+    def test_m_star_only_skips_generators_and_branches(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            payload = _config(root).to_dict()
+            payload["federation"]["m_star_only"] = True
+
+            def unexpected_generator_factory(phase):
+                raise AssertionError(f"generator must not run during M*-only: {phase}")
+
+            result = ScenarioRunner(
+                ScenarioConfig.from_mapping(payload),
+                adapter=_Adapter(),
+                client_trainer=_ClientTrainer(),
+                aggregator=WeightedMean(),
+                initial_state={"weight": torch.tensor([0.0])},
+                generator_lifecycle_factory=unexpected_generator_factory,
+                attack_strategy=_AttackStrategy(),
+            ).run()
+
+            self.assertEqual(result.branches, {})
+            self.assertTrue((root / "checkpoints" / "m_star.pt").is_file())
+            summary = json.loads(result.summary_path.read_text(encoding="utf-8"))
+            self.assertEqual(summary["selected_branches"], [])
+            self.assertEqual(summary["branches"], {})
+
+    def test_attack_only_requires_canonical_clean(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            payload = _config(root).to_dict()
+            payload["federation"]["branches"] = ("attack",)
+            payload["federation"]["m_star_path"] = str(root / "m_star.pt")
+            with self.assertRaisesRegex(ValueError, "canonical clean baseline"):
+                ScenarioRunner(
+                    ScenarioConfig.from_mapping(payload),
+                    adapter=_Adapter(),
+                    client_trainer=_ClientTrainer(),
+                    aggregator=WeightedMean(),
+                    initial_state={"weight": torch.tensor([0.0])},
+                    generator_lifecycle_factory=lambda phase: None,
+                    attack_strategy=_AttackStrategy(),
+                ).run()
+
     def test_tiny_end_to_end_uses_one_m_star_schedule_and_server_boundary(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -351,6 +393,10 @@ class ScenarioRunnerTest(unittest.TestCase):
                 100.0,
             )
             self.assertEqual(
+                summary["branches"]["attack"]["delta_baseline"],
+                "run_clean",
+            )
+            self.assertEqual(
                 summary["branches"]["attack"]["attack_exposure"],
                 {
                     "active_poisoned_updates": 2,
@@ -373,6 +419,8 @@ class ScenarioRunnerTest(unittest.TestCase):
             manifest = json.loads((root / "run_manifest.json").read_text(encoding="utf-8"))
             self.assertEqual(manifest["schema_version"], 2)
             self.assertEqual(manifest["status"], "completed")
+            self.assertIsInstance(manifest["git_dirty"], bool)
+            self.assertEqual(len(manifest["source_tree_hash"]), 64)
             self.assertIn("torch_cuda_version", manifest["runtime"])
             self.assertIn("gpu_devices", manifest["runtime"])
             self.assertIn("argv", manifest["runtime"])

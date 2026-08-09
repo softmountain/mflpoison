@@ -108,6 +108,7 @@ class FederationConfig:
     patience: Optional[int] = None
     min_delta: float = 0.0
     m_star_path: Optional[str] = None
+    m_star_only: bool = False
     branches: Tuple[str, ...] = ()
     options: Mapping[str, Any] = field(default_factory=dict)
 
@@ -136,6 +137,10 @@ class FederationConfig:
             raise ValueError("federation.patience must be positive")
         if self.m_star_path is not None and not str(self.m_star_path):
             raise ValueError("federation.m_star_path cannot be empty")
+        if self.m_star_only and self.m_star_path is not None:
+            raise ValueError("federation.m_star_only cannot reuse an existing M*")
+        if self.m_star_only and self.branches:
+            raise ValueError("federation.m_star_only cannot select experiment branches")
         allowed_branches = {"clean", "attack", "defended"}
         unknown_branches = sorted(set(self.branches) - allowed_branches)
         if unknown_branches:
@@ -240,10 +245,15 @@ class EvaluationConfig:
     metrics: Tuple[str, ...] = ("accuracy",)
     evaluate_test: bool = True
     evaluate_attack: bool = True
+    canonical_clean_path: Optional[str] = None
     options: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
         object.__setattr__(self, "metrics", _string_tuple(self.metrics, "evaluation.metrics"))
+        if self.canonical_clean_path is not None and not str(
+            self.canonical_clean_path
+        ):
+            raise ValueError("evaluation.canonical_clean_path cannot be empty")
 
 
 @dataclass(frozen=True)
@@ -315,6 +325,8 @@ class ScenarioConfig:
     def selected_branches(self) -> Tuple[str, ...]:
         """Resolve explicit branch selection or safe defaults from enabled features."""
 
+        if self.federation.m_star_only:
+            return ()
         configured = tuple(self.federation.branches)
         if configured:
             selected = configured

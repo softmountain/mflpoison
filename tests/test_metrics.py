@@ -25,6 +25,7 @@ class MetricsTest(unittest.TestCase):
             goal_class=1,
         )
         self.assertEqual(metrics["attack_source_sample_count"], 2.0)
+        self.assertEqual(metrics["attack_success_count"], 1.0)
         self.assertAlmostEqual(metrics["attack_success_rate"], 0.5)
         self.assertAlmostEqual(metrics["attack_success_rate_pct"], 50.0)
         self.assertAlmostEqual(metrics["source_class_accuracy"], 50.0)
