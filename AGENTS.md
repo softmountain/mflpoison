@@ -147,13 +147,14 @@ ARTIFACT_ROOT=/mnt/sda/mtzh/xp/experiments/fedpoi/artifact \
 bash scripts/run_experiments.sh \
   --gpus 0,1,2,3 \
   --canonical-clean-config configs/experiments/ucf101_fdmm_dtm_poison_0to1.yaml \
+  --experiment-branch attack \
   configs/experiments/<attack-config>.yaml:42 \
   configs/experiments/<attack-config>.yaml:43
 ```
 
 - 超参数仍只写入 YAML；任务输入不再携带显式 GPU。
 - 持续监控指定 GPU 池和任务状态；GPU 空闲时自动领取下一项实验，一张卡同时只运行一项任务。
-- 每个 seed 固定建立 `mstar -> clean-1..clean-5 -> canonical-aggregate -> attack-only` 依赖链。四卡环境先并发四次 clean，第五次在首张空闲卡上自动补位。
+- 每个 seed 固定建立 `mstar -> clean-1..clean-5 -> canonical-aggregate -> attack-only|defended-only` 依赖链；`--experiment-branch` 对一个批次统一选择 `attack` 或 `defended`。四卡环境先并发四次 clean，第五次在首张空闲卡上自动补位。
 - 为每项任务保存独立 `train.log`、PID、退出状态和运行目录；`artifact/batches/<batch-id>/status.tsv` 固定记录 `job_id/stage/experiment/seed/repeat/depends_on/gpu/pid/status/exit_code/queued_at/started_at/finished_at/config/run_dir/failure_reason`。
 - 状态只使用 `queued/running/completed/failed`。队列未清空时持续补位；任务结束后及时释放 GPU。上游失败时，下游不启动并记为 `failed`、退出码 `125`、`failure_reason=dependency_failed:<job_id>`。
 - 调度器同时检查自身占卡、`nvidia-smi` compute 进程和显存占用，并使用主机级全局 `flock` 保证同一主机只运行一个调度器实例。`SCHEDULER_LOCK_FILE` 只允许在隔离测试或已确认不会争用 GPU 的受控环境中覆盖，不用于普通 BJMU 批次。
@@ -172,7 +173,7 @@ bash scripts/run_experiments.sh \
 ASR_canonical_clean(seed) = mean(ASR_clean_1, ..., ASR_clean_5)
 ```
 
-- 同一 seed 的所有攻击配置复用同一份共同 M* 和 `ASR_canonical_clean`，不再为每个参数配置重复训练 clean；`ucf101_dtm_poison_strength/*.yaml` 明确设置 `branches: [attack]`，调度器再注入共同 M* 与 canonical JSON 路径并写入 `config_resolved.yaml`。attack-only/defended-only 不允许省略 canonical baseline。
+- 同一 seed 的所有攻击或防御配置复用同一份共同 M* 和 `ASR_canonical_clean`，不再为每个参数配置重复训练 clean；`ucf101_dtm_poison_strength/*.yaml` 明确设置 `branches: [attack]`，`ucf101_dtm_poison_strength_defense/*.yaml` 设置 `branches: [defended]` 且启用服务器防御，调度器再注入共同 M* 与 canonical JSON 路径并写入 `config_resolved.yaml`。attack-only/defended-only 不允许省略 canonical baseline。
 - seeds 43 和 44 分别生成自己的共同 M* 和五次 clean 基线，不跨 seed 复用。
 - 每个攻击配置按下式计算组内增量：
 

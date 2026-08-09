@@ -9,11 +9,12 @@ usage: scripts/run_experiments.sh [options] CONFIG:SEED [CONFIG:SEED ...]
 options:
   --gpus LIST                    comma-separated GPU pool (default: 0,1,2,3)
   --canonical-clean-config PATH configuration used for M* and clean replicas
+  --experiment-branch NAME      attack or defended (default: attack)
   --monitor-interval SECONDS     scheduler polling interval (default: 30)
   --idle-memory-mib MIB          maximum idle GPU memory use (default: 1024)
 
 The scheduler creates this dependency chain for every seed:
-  mstar -> clean-1..clean-5 -> canonical-aggregate -> attack-only jobs
+  mstar -> clean-1..clean-5 -> canonical-aggregate -> selected branch jobs
 
 Environment overrides:
   PYTHON_BIN, ARTIFACT_ROOT, NVIDIA_SMI_BIN, BATCH_ID, SCHEDULER_LOCK_FILE
@@ -35,6 +36,7 @@ nvidia_smi_bin="${NVIDIA_SMI_BIN:-nvidia-smi}"
 scheduler_lock_file="${SCHEDULER_LOCK_FILE:-/tmp/mflpoison-run-experiments.lock}"
 gpu_csv="0,1,2,3"
 canonical_config="configs/experiments/ucf101_fdmm_dtm_poison_0to1.yaml"
+experiment_branch="attack"
 monitor_interval="30"
 idle_memory_mib="1024"
 clean_replicas=5
@@ -51,6 +53,11 @@ while [ "$#" -gt 0 ]; do
     --canonical-clean-config)
       [ "$#" -ge 2 ] || die "--canonical-clean-config requires a path"
       canonical_config="$2"
+      shift 2
+      ;;
+    --experiment-branch)
+      [ "$#" -ge 2 ] || die "--experiment-branch requires attack or defended"
+      experiment_branch="$2"
       shift 2
       ;;
     --monitor-interval)
@@ -88,6 +95,10 @@ done
   usage >&2
   exit 2
 }
+case "$experiment_branch" in
+  attack|defended) ;;
+  *) die "--experiment-branch must be attack or defended" ;;
+esac
 [[ "$idle_memory_mib" =~ ^[0-9]+$ ]] || die "--idle-memory-mib must be an integer"
 [[ "$monitor_interval" =~ ^[0-9]+([.][0-9]+)?$ ]] \
   || die "--monitor-interval must be a non-negative number"
@@ -248,11 +259,11 @@ for input_index in "${!input_configs[@]}"; do
   config="${input_configs[$input_index]}"
   seed="${input_seeds[$input_index]}"
   ordinal="$(printf '%03d' "$((input_index + 1))")"
-  attack_id="attack-${ordinal}-seed-${seed}"
-  attack_run_id="${batch_id}_seed-${seed}_git-${git_label}_${attack_id}"
-  attack_run_dir="$artifact_root/$(experiment_path "$config")/$attack_run_id"
-  add_job "$attack_id" "attack" "$(basename "${config%.*}")" "$seed" "" \
-    "canonical-aggregate-seed-$seed" "$config" "$attack_run_dir"
+  experiment_id="${experiment_branch}-${ordinal}-seed-${seed}"
+  experiment_run_id="${batch_id}_seed-${seed}_git-${git_label}_${experiment_id}"
+  experiment_run_dir="$artifact_root/$(experiment_path "$config")/$experiment_run_id"
+  add_job "$experiment_id" "$experiment_branch" "$(basename "${config%.*}")" "$seed" "" \
+    "canonical-aggregate-seed-$seed" "$config" "$experiment_run_dir"
 done
 
 write_status() {
@@ -448,9 +459,9 @@ start_gpu_job() {
     clean)
       command+=(--branch clean --m-star-path "${seed_m_star_path[$seed]}")
       ;;
-    attack)
+    attack|defended)
       command+=(
-        --branch attack
+        --branch "$stage"
         --m-star-path "${seed_m_star_path[$seed]}"
         --canonical-clean "${seed_baseline_path[$seed]}"
       )

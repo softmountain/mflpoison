@@ -58,6 +58,7 @@ flowchart TD
 | `configs/experiments/ucf101_fdmm_dtm_poison_0to1_defense.yaml` | 增加 defended 分支 |
 | `configs/experiments/ucf101_fdmm_dtm_poison_0to1_smoke.yaml` | 最短连通性验证 |
 | `configs/experiments/ucf101_dtm_poison_strength/*.yaml` | 基于主配置显式设置关键实验参数，并声明为 attack-only |
+| `configs/experiments/ucf101_dtm_poison_strength_defense/*.yaml` | 与攻击矩阵参数一一对应，启用服务器防御并声明为 defended-only |
 | `mflpoison/core/config.py` | 配置 dataclass、严格字段检查、`base_config` 合并 |
 
 派生配置只包含：
@@ -304,7 +305,7 @@ artifact/batches/<batch-id>/canonical_clean_seed-<N>.json
 
 ## 10. 多 GPU 批处理与监控
 
-`scripts/run_experiments.sh` 是唯一批量实验脚本。位置参数是待运行的 attack-only 队列，每项格式为：
+`scripts/run_experiments.sh` 是唯一批量实验脚本。位置参数是待运行的 attack-only 或 defended-only 队列，每项格式为：
 
 ```text
 CONFIG:SEED
@@ -317,6 +318,7 @@ PYTHON_BIN=/mnt/sda/mtzh/xp/envs/fedpoi-py39/bin/python \
 bash scripts/run_experiments.sh \
   --gpus 0,1,2,3 \
   --canonical-clean-config configs/experiments/ucf101_fdmm_dtm_poison_0to1.yaml \
+  --experiment-branch attack \
   configs/experiments/ucf101_dtm_poison_strength/malicious-clients-1_poison-20pct_generator-epochs-20.yaml:42 \
   configs/experiments/ucf101_dtm_poison_strength/malicious-clients-2_poison-50pct_generator-epochs-20.yaml:42 \
   configs/experiments/ucf101_dtm_poison_strength/malicious-clients-3_poison-50pct_generator-epochs-50.yaml:42
@@ -328,6 +330,7 @@ bash scripts/run_experiments.sh \
 |---|---:|---|
 | `--gpus LIST` | `0,1,2,3` | 逗号分隔的 GPU 池 |
 | `--canonical-clean-config PATH` | `configs/experiments/ucf101_fdmm_dtm_poison_0to1.yaml` | 生成共同 M* 和五次 clean 使用的配置 |
+| `--experiment-branch NAME` | `attack` | 统一运行 `attack` 或 `defended` 分支 |
 | `--monitor-interval SECONDS` | `30` | 子进程和 GPU 轮询间隔 |
 | `--idle-memory-mib MIB` | `1024` | 判定空闲卡允许的最大已用显存 |
 | `PYTHON_BIN` | `python` | runner 和聚合器 Python |
@@ -354,16 +357,16 @@ flowchart LR
     C3 --> A
     C4 --> A
     C5 --> A
-    A --> X1["attack config 1"]
-    A --> X2["attack config 2..."]
+    A --> X1["selected branch config 1"]
+    A --> X2["selected branch config 2..."]
 ```
 
 - `mstar` 调用 runner 的 `--m-star-only`；
 - 五个 `clean` 调用 `--branch clean --m-star-path <共同 M*>`；
 - `canonical_aggregate` 是不占 GPU 的短任务，调用 `python -m mflpoison.runner.canonical_clean`；
-- attack 调用 `--branch attack --m-star-path <共同 M*> --canonical-clean <聚合 JSON>`。
+- 实验任务调用 `--branch attack|defended --m-star-path <共同 M*> --canonical-clean <聚合 JSON>`。
 
-单 seed 且四卡均空闲时，M* 完成后前四个 clean 会先占满四卡；任一 clean 结束释放 GPU 后，第五个自动补位。只有五个 clean 全部成功，聚合任务才会运行；只有聚合成功，对应 seed 的 attack 队列才会开始。
+单 seed 且四卡均空闲时，M* 完成后前四个 clean 会先占满四卡；任一 clean 结束释放 GPU 后，第五个自动补位。只有五个 clean 全部成功，聚合任务才会运行；只有聚合成功，对应 seed 的所选 attack 或 defended 队列才会开始。
 
 ### 10.2 GPU 空闲判定
 

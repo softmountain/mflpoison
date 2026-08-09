@@ -44,6 +44,7 @@ python -m mflpoison.runner \
 - `ucf101_fdmm_dtm_poison_0to1_defense.yaml`：clean、attack 与 defended 分支；
 - `ucf101_fdmm_dtm_poison_0to1_smoke.yaml`：短流程连通性测试；
 - `ucf101_dtm_poison_strength/*.yaml`：使用人类可读文件名配置恶意客户端数、中毒比例和生成器 epoch，并明确声明为 attack-only；调度器为其注入共同 M* 和 canonical clean 路径。
+- `ucf101_dtm_poison_strength_defense/*.yaml`：与攻击强度矩阵逐项对应，但启用服务器防御并声明为 defended-only。
 
 完整配置包含八部分：
 
@@ -219,38 +220,39 @@ python -m mflpoison.runner.canonical_clean \
 
 ## 多 GPU 批处理
 
-`scripts/run_experiments.sh` 接收一个 GPU 池和多个 `CONFIG:SEED` attack 作业。作业不再预先绑定 GPU；脚本持续检查池内 GPU，只有在该卡没有计算进程且已用显存不高于空闲阈值时，才把下一个依赖已满足的任务分配给它。一张卡同时只运行一个调度任务。
+`scripts/run_experiments.sh` 接收一个 GPU 池和多个 `CONFIG:SEED` 作业。`--experiment-branch` 选择统一运行 `attack`（默认）或 `defended`。作业不再预先绑定 GPU；脚本持续检查池内 GPU，只有在该卡没有计算进程且已用显存不高于空闲阈值时，才把下一个依赖已满足的任务分配给它。一张卡同时只运行一个调度任务。
 
 ```bash
 PYTHON_BIN=/mnt/sda/mtzh/xp/envs/fedpoi-py39/bin/python \
 bash scripts/run_experiments.sh \
   --gpus 0,1,2,3 \
   --canonical-clean-config configs/experiments/ucf101_fdmm_dtm_poison_0to1.yaml \
+  --experiment-branch attack \
   configs/experiments/ucf101_dtm_poison_strength/malicious-clients-1_poison-20pct_generator-epochs-20.yaml:42 \
   configs/experiments/ucf101_dtm_poison_strength/malicious-clients-2_poison-50pct_generator-epochs-20.yaml:42
 ```
 
-`--gpus` 默认是 `0,1,2,3`，`--canonical-clean-config` 默认是上例的基准配置。还可用 `--monitor-interval` 设置轮询秒数、用 `--idle-memory-mib` 设置空闲显存阈值；默认分别为 30 秒和 1024 MiB。主机级全局锁保证同一主机只运行一个调度器实例；`SCHEDULER_LOCK_FILE` 仅供隔离测试或确认不会争用 GPU 的受控环境覆盖锁路径。
+`--gpus` 默认是 `0,1,2,3`，`--canonical-clean-config` 默认是上例的基准配置，`--experiment-branch` 默认是 `attack`。运行防御矩阵时设置 `--experiment-branch defended` 并传入启用防御的配置。还可用 `--monitor-interval` 设置轮询秒数、用 `--idle-memory-mib` 设置空闲显存阈值；默认分别为 30 秒和 1024 MiB。主机级全局锁保证同一主机只运行一个调度器实例；`SCHEDULER_LOCK_FILE` 仅供隔离测试或确认不会争用 GPU 的受控环境覆盖锁路径。
 
-脚本会为输入中每个不同 seed 固定构造以下依赖图；同一 seed 的多个 attack 配置共享一份 M* 和 canonical clean：
+脚本会为输入中每个不同 seed 固定构造以下依赖图；同一 seed 的多个 attack 或 defended 配置共享一份 M* 和 canonical clean：
 
 ```text
 mstar
   -> clean-repeat-1 ┐
   -> clean-repeat-2 │
-  -> clean-repeat-3 ├-> canonical-aggregate -> attack-only 配置 1
-  -> clean-repeat-4 │                       └-> attack-only 配置 2 ...
+  -> clean-repeat-3 ├-> canonical-aggregate -> 所选分支配置 1
+  -> clean-repeat-4 │                       └-> 所选分支配置 2 ...
   -> clean-repeat-5 ┘
 ```
 
 - `mstar` 使用 `--m-star-only` 生成该 seed 的共同 M*；
 - 五份 clean 使用相同 seed、partition、共同 M* 和客户端日程，并由 `--branch clean --m-star-path ...` 启动；四张卡时先运行四份，任一卡释放后自动补上第五份；
 - `canonical-aggregate` 在五份 clean 全部成功后生成 `canonical_clean_seed-<seed>.json`；
-- 每个攻击配置随后由 `--branch attack --m-star-path ... --canonical-clean ...` 启动，不再重复训练 clean；
+- 每个实验配置随后由 `--branch attack|defended --m-star-path ... --canonical-clean ...` 启动，不再重复训练 clean；
 - 任一任务失败都会记为 `failed`；依赖它且尚未启动的任务同样停止，并记录 `failure_reason=dependency_failed:<job-id>`。
 - 收到 `HUP`、`INT` 或 `TERM` 时，调度器停止派发、终止并回收已启动的独立进程组，把全部未完成任务写成 `failed` 和 `scheduler_interrupted:<signal>` 后释放主机锁。
 
-每个 mstar、clean 和 attack 任务都有包含 stage、seed、repeat/序号的唯一 job ID 和运行目录，不会因同 seed 的并发任务在同一秒启动而碰撞。工作区有未提交候选时，run ID 的 Git 部分会附加 `-dirty`，并由 manifest 保存源码树 hash；正式实验仍应使用 clean 的里程碑提交。任务的 PID、GPU、退出码、依赖、时间戳、配置、run_dir 和失败原因持续写入：
+每个 mstar、clean 和所选实验分支任务都有包含 stage、seed、repeat/序号的唯一 job ID 和运行目录，不会因同 seed 的并发任务在同一秒启动而碰撞。工作区有未提交候选时，run ID 的 Git 部分会附加 `-dirty`，并由 manifest 保存源码树 hash；正式实验仍应使用 clean 的里程碑提交。任务的 PID、GPU、退出码、依赖、时间戳、配置、run_dir 和失败原因持续写入：
 
 ```text
 artifact/batches/<batch-id>/status.tsv

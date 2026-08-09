@@ -114,6 +114,38 @@ class ScenarioConfigTest(unittest.TestCase):
         self.assertEqual(config.artifact.root_dir, "artifact")
         self.assertEqual(config.selected_branches, ("attack",))
 
+    def test_defended_strength_configs_match_attack_parameter_matrix(self):
+        experiment_root = ROOT / "configs" / "experiments"
+        attack_root = experiment_root / "ucf101_dtm_poison_strength"
+        defended_root = experiment_root / "ucf101_dtm_poison_strength_defense"
+        names = sorted(path.name for path in attack_root.glob("*.yaml"))
+        self.assertEqual(len(names), 10)
+        self.assertEqual(
+            names,
+            sorted(path.name for path in defended_root.glob("*.yaml")),
+        )
+        for name in names:
+            with self.subTest(name=name):
+                attack = load_scenario_config(attack_root / name)
+                defended = load_scenario_config(defended_root / name)
+                self.assertEqual(attack.selected_branches, ("attack",))
+                self.assertEqual(defended.selected_branches, ("defended",))
+                self.assertFalse(attack.defense.enabled)
+                self.assertTrue(defended.defense.enabled)
+                self.assertEqual(
+                    defended.attack.malicious_clients,
+                    attack.attack.malicious_clients,
+                )
+                self.assertEqual(
+                    defended.attack.malicious_client_count,
+                    attack.attack.malicious_client_count,
+                )
+                self.assertEqual(
+                    defended.attack.poison_ratio,
+                    attack.attack.poison_ratio,
+                )
+                self.assertEqual(defended.generator.epochs, attack.generator.epochs)
+
     def test_federation_supports_two_phase_round_counts(self):
         config = valid_config()
         config["federation"]["pretrain_rounds"] = 20

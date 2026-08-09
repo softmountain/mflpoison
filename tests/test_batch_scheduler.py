@@ -45,6 +45,7 @@ class BatchSchedulerTest(unittest.TestCase):
         sleep_seconds="0.12",
         manifest_status="completed",
         lock_file=None,
+        experiment_branch="attack",
     ):
         root = Path(root)
         events = root / "events.tsv"
@@ -135,6 +136,8 @@ class BatchSchedulerTest(unittest.TestCase):
         command = [
             "bash",
             str(SCRIPT),
+            "--experiment-branch",
+            experiment_branch,
             "--gpus",
             "0,1,2,3",
             "--monitor-interval",
@@ -151,9 +154,18 @@ class BatchSchedulerTest(unittest.TestCase):
         with status_path.open("r", encoding="utf-8", newline="") as handle:
             return list(csv.DictReader(handle, delimiter="\t"))
 
-    def _run_scheduler(self, root, fail_job="", manifest_status="completed"):
+    def _run_scheduler(
+        self,
+        root,
+        fail_job="",
+        manifest_status="completed",
+        experiment_branch="attack",
+    ):
         command, env, artifact_root, events = self._prepare_scheduler(
-            root, fail_job=fail_job, manifest_status=manifest_status
+            root,
+            fail_job=fail_job,
+            manifest_status=manifest_status,
+            experiment_branch=experiment_branch,
         )
         completed = subprocess.run(
             command,
@@ -197,6 +209,44 @@ class BatchSchedulerTest(unittest.TestCase):
                 else:
                     active_gpus.remove(gpu)
             self.assertEqual(active_gpus, set())
+
+    def test_defended_branch_is_scheduled_and_forwarded_to_runner(self):
+        with tempfile.TemporaryDirectory() as directory:
+            completed, rows, events = self._run_scheduler(
+                directory, experiment_branch="defended"
+            )
+            self.assertEqual(completed.returncode, 0, completed.stdout)
+            self.assertEqual(sum(row["stage"] == "defended" for row in rows), 2)
+            self.assertFalse(any(row["stage"] == "attack" for row in rows))
+            defended_rows = [row for row in rows if row["stage"] == "defended"]
+            self.assertTrue(
+                all(row["job_id"].startswith("defended-") for row in defended_rows)
+            )
+            self.assertEqual(
+                sum(row[0] == "start" and row[1] == "defended" for row in events),
+                2,
+            )
+
+    def test_invalid_experiment_branch_is_rejected_before_scheduling(self):
+        with tempfile.TemporaryDirectory() as directory:
+            command, env, artifact_root, _events = self._prepare_scheduler(
+                directory, experiment_branch="unknown"
+            )
+            completed = subprocess.run(
+                command,
+                cwd=str(ROOT),
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                timeout=5,
+            )
+            self.assertEqual(completed.returncode, 2, completed.stdout)
+            self.assertIn(
+                "--experiment-branch must be attack or defended",
+                completed.stdout,
+            )
+            self.assertFalse((artifact_root / "batches").exists())
 
     def test_clean_failure_blocks_aggregate_and_attacks(self):
         with tempfile.TemporaryDirectory() as directory:
