@@ -101,5 +101,34 @@ class RunnerBuilderValidationTest(unittest.TestCase):
         self.assertEqual(trainer.variant, "dtm")
         self.assertEqual(trainer.output_dir, expected)
 
+    def test_generator_learning_rates_support_separate_and_legacy_values(self):
+        runner = build_default_runner(
+            scenario_config(
+                lambda value: value["generator"].update(
+                    learning_rate=3e-4,
+                    discriminator_learning_rate=5e-5,
+                )
+            )
+        )
+        trainer = runner.generator_lifecycle_factory("separate").trainer_factory(
+            "client-0"
+        )
+        self.assertEqual(trainer.config_overrides["lr_g"], 3e-4)
+        self.assertEqual(trainer.config_overrides["lr_d"], 5e-5)
+
+        legacy_runner = build_default_runner(
+            scenario_config(
+                lambda value: value["generator"].update(
+                    learning_rate=4e-4,
+                    discriminator_learning_rate=None,
+                )
+            )
+        )
+        legacy_trainer = legacy_runner.generator_lifecycle_factory(
+            "legacy"
+        ).trainer_factory("client-0")
+        self.assertEqual(legacy_trainer.config_overrides["lr_g"], 4e-4)
+        self.assertEqual(legacy_trainer.config_overrides["lr_d"], 4e-4)
+
 if __name__ == "__main__":
     unittest.main()

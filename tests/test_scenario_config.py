@@ -1,11 +1,14 @@
 import json
 import tempfile
 import unittest
+from contextlib import redirect_stderr
+from io import StringIO
 from pathlib import Path
 
 import yaml
 
 from mflpoison.core.config import ScenarioConfig, load_scenario_config
+from mflpoison.runner.__main__ import main as runner_main
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -100,6 +103,53 @@ class ScenarioConfigTest(unittest.TestCase):
         loaded = ScenarioConfig.from_mapping(config)
         self.assertEqual(loaded.generator.options["lambda_diversity"], 0.2)
 
+    def test_generator_supports_separate_discriminator_learning_rate(self):
+        config = valid_config()
+        config["generator"].update(
+            learning_rate=3e-4,
+            discriminator_learning_rate=5e-5,
+        )
+        loaded = ScenarioConfig.from_mapping(config)
+        self.assertEqual(loaded.generator.learning_rate, 3e-4)
+        self.assertEqual(loaded.generator.discriminator_learning_rate, 5e-5)
+
+        config["generator"]["discriminator_learning_rate"] = 0
+        with self.assertRaisesRegex(ValueError, "discriminator_learning_rate"):
+            ScenarioConfig.from_mapping(config)
+
+    def test_runner_requires_explicit_cli_authorization_for_approved_reuse(self):
+        config = valid_config()
+        config["evaluation"].update(
+            canonical_clean_path="canonical-clean.json",
+            canonical_source_policy="approved_reuse",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "scenario.yaml"
+            config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+            stderr = StringIO()
+            with redirect_stderr(stderr), self.assertRaises(SystemExit) as raised:
+                runner_main(["--config", str(config_path)])
+            self.assertEqual(raised.exception.code, 2)
+            self.assertIn("must be explicitly authorized", stderr.getvalue())
+
+            stderr = StringIO()
+            with redirect_stderr(stderr), self.assertRaises(SystemExit) as raised:
+                runner_main(
+                    [
+                        "--config",
+                        str(config_path),
+                        "--canonical-clean",
+                        "canonical-clean.json",
+                        "--canonical-source-policy",
+                        "approved_reuse",
+                    ]
+                )
+            self.assertEqual(raised.exception.code, 2)
+            self.assertIn(
+                "requires --m-star-path and --canonical-clean",
+                stderr.getvalue(),
+            )
+
     def test_derived_config_only_overrides_experiment_parameters(self):
         config = load_scenario_config(
             ROOT
@@ -145,6 +195,90 @@ class ScenarioConfigTest(unittest.TestCase):
                     attack.attack.poison_ratio,
                 )
                 self.assertEqual(defended.generator.epochs, attack.generator.epochs)
+
+    def test_separate_gan_learning_rate_configs_cover_eleven_dual_branch_cases(self):
+        config_root = (
+            ROOT
+            / "configs"
+            / "experiments"
+            / "ucf101_dtm_poison_strength_separate_gan_learning_rates"
+        )
+        expected = {
+            "malicious-clients-1_poison-20pct_generator-epochs-5.yaml": (
+                ("1",),
+                0.2,
+                5,
+            ),
+            "malicious-clients-1_poison-20pct_generator-epochs-20.yaml": (
+                ("1",),
+                0.2,
+                20,
+            ),
+            "malicious-clients-1_poison-20pct_generator-epochs-50.yaml": (
+                ("1",),
+                0.2,
+                50,
+            ),
+            "malicious-clients-1_poison-50pct_generator-epochs-5.yaml": (
+                ("1",),
+                0.5,
+                5,
+            ),
+            "malicious-clients-1_poison-100pct_generator-epochs-5.yaml": (
+                ("1",),
+                1.0,
+                5,
+            ),
+            "malicious-clients-2_poison-20pct_generator-epochs-5.yaml": (
+                ("0", "1"),
+                0.2,
+                5,
+            ),
+            "malicious-clients-2_poison-20pct_generator-epochs-20.yaml": (
+                ("0", "1"),
+                0.2,
+                20,
+            ),
+            "malicious-clients-2_poison-50pct_generator-epochs-20.yaml": (
+                ("0", "1"),
+                0.5,
+                20,
+            ),
+            "malicious-clients-3_poison-20pct_generator-epochs-5.yaml": (
+                ("0", "1", "4"),
+                0.2,
+                5,
+            ),
+            "malicious-clients-3_poison-50pct_generator-epochs-50.yaml": (
+                ("0", "1", "4"),
+                0.5,
+                50,
+            ),
+            "malicious-clients-3_poison-100pct_generator-epochs-50.yaml": (
+                ("0", "1", "4"),
+                1.0,
+                50,
+            ),
+        }
+        self.assertEqual(
+            sorted(expected),
+            sorted(path.name for path in config_root.glob("*.yaml")),
+        )
+        for name, (clients, poison_ratio, epochs) in expected.items():
+            with self.subTest(name=name):
+                config = load_scenario_config(config_root / name)
+                self.assertEqual(config.selected_branches, ("attack", "defended"))
+                self.assertTrue(config.defense.enabled)
+                self.assertEqual(config.attack.malicious_clients, clients)
+                self.assertEqual(config.attack.malicious_client_count, len(clients))
+                self.assertEqual(config.attack.poison_ratio, poison_ratio)
+                self.assertEqual(config.generator.epochs, epochs)
+                self.assertEqual(config.generator.learning_rate, 3e-4)
+                self.assertEqual(config.generator.discriminator_learning_rate, 5e-5)
+                self.assertEqual(
+                    config.evaluation.canonical_source_policy,
+                    "exact",
+                )
 
     def test_federation_supports_two_phase_round_counts(self):
         config = valid_config()

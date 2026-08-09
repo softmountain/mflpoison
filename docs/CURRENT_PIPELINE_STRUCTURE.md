@@ -43,7 +43,7 @@ flowchart TD
     Scheduler --> MStarOnly["mstar-only"]
     MStarOnly --> CleanFive["固定 5 次 clean-only"]
     CleanFive --> Canonical["runner.canonical_clean"]
-    Canonical --> AttackOnly["attack-only + canonical Delta_ASR"]
+    Canonical --> Experiments["attack-only / defended-only / paired + canonical Delta_ASR"]
 ```
 
 代码职责保持单向：配置描述实验，builder 组装对象，scenario 编排阶段，coordinator 执行联邦轮次，攻击只改变恶意客户端的数据视图，防御只处理服务器收到的客户端更新。
@@ -59,6 +59,7 @@ flowchart TD
 | `configs/experiments/ucf101_fdmm_dtm_poison_0to1_smoke.yaml` | 最短连通性验证 |
 | `configs/experiments/ucf101_dtm_poison_strength/*.yaml` | 基于主配置显式设置关键实验参数，并声明为 attack-only |
 | `configs/experiments/ucf101_dtm_poison_strength_defense/*.yaml` | 与攻击矩阵参数一一对应，启用服务器防御并声明为 defended-only |
+| `configs/experiments/ucf101_dtm_poison_strength_separate_gan_learning_rates/*.yaml` | 沿用 11 组攻击者参数，设置 `lrG=3e-4`、`lrD=5e-5` 并配对运行 attack/defended |
 | `mflpoison/core/config.py` | 配置 dataclass、严格字段检查、`base_config` 合并 |
 
 派生配置只包含：
@@ -76,6 +77,8 @@ overrides:
 ```
 
 因此实验超参数差异留在 YAML 中，不需要为每组组合新增 Python 文件。入口还可以为批次阶段覆盖 seed、分支、共同 M* 路径和 canonical clean 路径；这些覆盖会先写回 `ScenarioConfig`，再把最终八段有效配置写入 `config_resolved.yaml`。
+
+`generator.learning_rate` 映射为 DTM 的 `lr_g`；可选的 `generator.discriminator_learning_rate` 映射为 `lr_d`。未设置后者时继续使用与 `lr_g` 相同的值，保持已有配置行为。
 
 ### 2.2 八段配置到代码对象
 
@@ -151,7 +154,7 @@ mstar-only
   -> 共同 checkpoints/m_star.pt
   -> clean-only repeat 1..5（都复用该 M*）
   -> canonical clean 聚合
-  -> attack-only 配置队列（复用同一 M* 和同一 canonical clean）
+  -> attack-only、defended-only 或配对配置队列（复用同一 M* 和同一 canonical clean）
 ```
 
 五次 clean 使用相同 seed、partition、客户端日程和 M*。`mflpoison.runner.canonical_clean` 固定只接受恰好五个、路径互不重复且已完成的 clean-only `summary.json`，并检查：
@@ -305,7 +308,7 @@ artifact/batches/<batch-id>/canonical_clean_seed-<N>.json
 
 ## 10. 多 GPU 批处理与监控
 
-`scripts/run_experiments.sh` 是唯一批量实验脚本。位置参数是待运行的 attack-only 或 defended-only 队列，每项格式为：
+`scripts/run_experiments.sh` 是唯一批量实验脚本。位置参数是待运行的单支线或 attack/defended 配对队列，每项格式为：
 
 ```text
 CONFIG:SEED
@@ -318,10 +321,9 @@ PYTHON_BIN=/mnt/sda/mtzh/xp/envs/fedpoi-py39/bin/python \
 bash scripts/run_experiments.sh \
   --gpus 0,1,2,3 \
   --canonical-clean-config configs/experiments/ucf101_fdmm_dtm_poison_0to1.yaml \
-  --experiment-branch attack \
-  configs/experiments/ucf101_dtm_poison_strength/malicious-clients-1_poison-20pct_generator-epochs-20.yaml:42 \
-  configs/experiments/ucf101_dtm_poison_strength/malicious-clients-2_poison-50pct_generator-epochs-20.yaml:42 \
-  configs/experiments/ucf101_dtm_poison_strength/malicious-clients-3_poison-50pct_generator-epochs-50.yaml:42
+  --experiment-branches attack,defended \
+  configs/experiments/ucf101_dtm_poison_strength_separate_gan_learning_rates/malicious-clients-1_poison-20pct_generator-epochs-5.yaml:42 \
+  configs/experiments/ucf101_dtm_poison_strength_separate_gan_learning_rates/malicious-clients-2_poison-50pct_generator-epochs-20.yaml:42
 ```
 
 可用选项和环境覆盖为：
@@ -331,6 +333,10 @@ bash scripts/run_experiments.sh \
 | `--gpus LIST` | `0,1,2,3` | 逗号分隔的 GPU 池 |
 | `--canonical-clean-config PATH` | `configs/experiments/ucf101_fdmm_dtm_poison_0to1.yaml` | 生成共同 M* 和五次 clean 使用的配置 |
 | `--experiment-branch NAME` | `attack` | 统一运行 `attack` 或 `defended` 分支 |
+| `--experiment-branches LIST` | 无 | 在同一个 runner 任务中运行逗号分隔的 `attack,defended` 配对分支；不能与单数选项并用 |
+| `--reuse-m-star-path PATH` | 无 | 与 canonical 路径成对提供，跳过 fresh 基线链 |
+| `--reuse-canonical-clean PATH` | 无 | 与 M* 路径成对提供，且只允许一个唯一 seed |
+| `--canonical-source-policy POLICY` | `exact` | 复用路径的源码策略；跨批准提交必须显式使用 `approved_reuse` |
 | `--monitor-interval SECONDS` | `30` | 子进程和 GPU 轮询间隔 |
 | `--idle-memory-mib MIB` | `1024` | 判定空闲卡允许的最大已用显存 |
 | `PYTHON_BIN` | `python` | runner 和聚合器 Python |
@@ -339,11 +345,11 @@ bash scripts/run_experiments.sh \
 | `NVIDIA_SMI_BIN` | `nvidia-smi` | GPU 查询程序路径 |
 | `SCHEDULER_LOCK_FILE` | 主机级固定锁文件 | 仅供隔离测试或确认不会争用 GPU 的受控环境覆盖；普通批次不修改 |
 
-clean 次数固定为 5，不提供把 canonical clean 改成其他次数的批处理参数。配置必须位于当前仓库的 `configs/experiments/`，seed 必须位于 `0..4294967295`；重复的 `CONFIG:SEED`、不存在的配置、重复/不存在的 GPU 和不安全的 batch ID 会在启动任务前被拒绝。
+默认模式固定重新训练 M* 和 5 次 clean，不提供把 canonical clean 改成其他次数的批处理参数。经批准使用复用路径时，调度器会在预检后持续复核 clean Git 来源、canonical 的严格重建结果以及 canonical/M* 文件哈希；任一来源变化都会中止批次。配置必须位于当前仓库的 `configs/experiments/`，seed 必须位于 `0..4294967295`；重复的 `CONFIG:SEED`、不存在的配置、重复/不存在的 GPU 和不安全的 batch ID 会在启动任务前被拒绝。
 
 ### 10.1 调度 DAG
 
-调度器先从 attack 队列提取所有不同 seed，再为每个 seed 创建：
+调度器先从实验队列提取所有不同 seed，再为每个 seed 创建：
 
 ```mermaid
 flowchart LR
@@ -364,9 +370,9 @@ flowchart LR
 - `mstar` 调用 runner 的 `--m-star-only`；
 - 五个 `clean` 调用 `--branch clean --m-star-path <共同 M*>`；
 - `canonical_aggregate` 是不占 GPU 的短任务，调用 `python -m mflpoison.runner.canonical_clean`；
-- 实验任务调用 `--branch attack|defended --m-star-path <共同 M*> --canonical-clean <聚合 JSON>`。
+- 实验任务调用一个或两个 `--branch attack|defended`，并统一传入 `--m-star-path <共同 M*> --canonical-clean <聚合 JSON>`；配对任务在 `status.tsv` 中记录为 `attack_defended`。
 
-单 seed 且四卡均空闲时，M* 完成后前四个 clean 会先占满四卡；任一 clean 结束释放 GPU 后，第五个自动补位。只有五个 clean 全部成功，聚合任务才会运行；只有聚合成功，对应 seed 的所选 attack 或 defended 队列才会开始。
+单 seed 且四卡均空闲时，M* 完成后前四个 clean 会先占满四卡；任一 clean 结束释放 GPU 后，第五个自动补位。只有五个 clean 全部成功，聚合任务才会运行；只有聚合成功，对应 seed 的单支线或配对队列才会开始。
 
 ### 10.2 GPU 空闲判定
 

@@ -45,13 +45,14 @@ python -m mflpoison.runner \
 - `ucf101_fdmm_dtm_poison_0to1_smoke.yaml`：短流程连通性测试；
 - `ucf101_dtm_poison_strength/*.yaml`：使用人类可读文件名配置恶意客户端数、中毒比例和生成器 epoch，并明确声明为 attack-only；调度器为其注入共同 M* 和 canonical clean 路径。
 - `ucf101_dtm_poison_strength_defense/*.yaml`：与攻击强度矩阵逐项对应，但启用服务器防御并声明为 defended-only。
+- `ucf101_dtm_poison_strength_separate_gan_learning_rates/*.yaml`：沿用 11 组攻击者设置，显式使用 `lrG=3e-4`、`lrD=5e-5`，并在同一任务中配对运行 attack 与 defended。
 
 完整配置包含八部分：
 
 - `dataset`：FedMM 特征根、fold、alpha、类别数和模态形状；
 - `model`：分类模型构造参数和可选初始 checkpoint；
 - `federation`：预训练/攻击轮数、客户端采样、本地训练、seed、分支以及 M* 生成/复用；
-- `generator`：DTM 变体、生命周期和训练参数；
+- `generator`：DTM 变体、生命周期和训练参数；`learning_rate` 对应 `lrG`，可选的 `discriminator_learning_rate` 对应 `lrD`，省略后兼容旧行为并使用与 `lrG` 相同的值；
 - `attack`：恶意客户端、中毒预算、注入方式和 0→1 标签语义；
 - `defense`：检测器、裁剪器、聚合器和决策策略；
 - `evaluation`：test、攻击与检测指标开关，以及可选 canonical clean 产物路径；
@@ -104,7 +105,7 @@ python -m mflpoison.runner \
   --run-dir artifact/ucf101_dtm_poison_strength/<attack-config>/<attack-run-id>
 ```
 
-`--m-star-only` 不能与 `--branch`、`--m-star-path` 或 `--canonical-clean` 组合。使用 `--canonical-clean` 时必须同时复用共同 M*，且只能运行 attack-only 或 defended-only，不能再包含 clean 分支。
+`--m-star-only` 不能与 `--branch`、`--m-star-path` 或 `--canonical-clean` 组合。使用 `--canonical-clean` 时必须同时复用共同 M*；可单独运行 attack/defended，也可重复 `--branch` 配对运行两者，但不能再包含 clean 分支。
 
 ## 数据与安装
 
@@ -220,21 +221,23 @@ python -m mflpoison.runner.canonical_clean \
 
 ## 多 GPU 批处理
 
-`scripts/run_experiments.sh` 接收一个 GPU 池和多个 `CONFIG:SEED` 作业。`--experiment-branch` 选择统一运行 `attack`（默认）或 `defended`。作业不再预先绑定 GPU；脚本持续检查池内 GPU，只有在该卡没有计算进程且已用显存不高于空闲阈值时，才把下一个依赖已满足的任务分配给它。一张卡同时只运行一个调度任务。
+`scripts/run_experiments.sh` 接收一个 GPU 池和多个 `CONFIG:SEED` 作业。`--experiment-branch` 选择统一运行 `attack`（默认）或 `defended`；`--experiment-branches attack,defended` 会让每个配置在同一个 runner 任务中运行严格配对的两条支线。作业不再预先绑定 GPU；脚本持续检查池内 GPU，只有在该卡没有计算进程且已用显存不高于空闲阈值时，才把下一个依赖已满足的任务分配给它。一张卡同时只运行一个调度任务。
 
 ```bash
 PYTHON_BIN=/mnt/sda/mtzh/xp/envs/fedpoi-py39/bin/python \
 bash scripts/run_experiments.sh \
   --gpus 0,1,2,3 \
   --canonical-clean-config configs/experiments/ucf101_fdmm_dtm_poison_0to1.yaml \
-  --experiment-branch attack \
-  configs/experiments/ucf101_dtm_poison_strength/malicious-clients-1_poison-20pct_generator-epochs-20.yaml:42 \
-  configs/experiments/ucf101_dtm_poison_strength/malicious-clients-2_poison-50pct_generator-epochs-20.yaml:42
+  --experiment-branches attack,defended \
+  configs/experiments/ucf101_dtm_poison_strength_separate_gan_learning_rates/malicious-clients-1_poison-20pct_generator-epochs-5.yaml:42 \
+  configs/experiments/ucf101_dtm_poison_strength_separate_gan_learning_rates/malicious-clients-2_poison-50pct_generator-epochs-20.yaml:42
 ```
 
-`--gpus` 默认是 `0,1,2,3`，`--canonical-clean-config` 默认是上例的基准配置，`--experiment-branch` 默认是 `attack`。运行防御矩阵时设置 `--experiment-branch defended` 并传入启用防御的配置。还可用 `--monitor-interval` 设置轮询秒数、用 `--idle-memory-mib` 设置空闲显存阈值；默认分别为 30 秒和 1024 MiB。主机级全局锁保证同一主机只运行一个调度器实例；`SCHEDULER_LOCK_FILE` 仅供隔离测试或确认不会争用 GPU 的受控环境覆盖锁路径。
+`--gpus` 默认是 `0,1,2,3`，`--canonical-clean-config` 默认是上例的基准配置，`--experiment-branch` 默认是 `attack`。运行防御矩阵时可设置 `--experiment-branch defended`；需要配对结果时使用 `--experiment-branches attack,defended`，两种选项不能同时出现。还可用 `--monitor-interval` 设置轮询秒数、用 `--idle-memory-mib` 设置空闲显存阈值；默认分别为 30 秒和 1024 MiB。主机级全局锁保证同一主机只运行一个调度器实例；`SCHEDULER_LOCK_FILE` 仅供隔离测试或确认不会争用 GPU 的受控环境覆盖锁路径。
 
-脚本会为输入中每个不同 seed 固定构造以下依赖图；同一 seed 的多个 attack 或 defended 配置共享一份 M* 和 canonical clean：
+默认模式始终重新训练该 seed 的 M* 和五份 canonical clean。只有经明确批准复用旧基线时，才成对提供 `--reuse-m-star-path` 与 `--reuse-canonical-clean`；跨提交复用还必须显式提供 `--canonical-source-policy approved_reuse`。调度器会在预检后持续复核 clean Git 来源、canonical 严格重建结果以及 canonical/M* 文件哈希，变化时中止批次。
+
+脚本会为输入中每个不同 seed 固定构造以下依赖图；同一 seed 的多个单支线或配对配置共享一份 M* 和 canonical clean：
 
 ```text
 mstar
@@ -248,7 +251,7 @@ mstar
 - `mstar` 使用 `--m-star-only` 生成该 seed 的共同 M*；
 - 五份 clean 使用相同 seed、partition、共同 M* 和客户端日程，并由 `--branch clean --m-star-path ...` 启动；四张卡时先运行四份，任一卡释放后自动补上第五份；
 - `canonical-aggregate` 在五份 clean 全部成功后生成 `canonical_clean_seed-<seed>.json`；
-- 每个实验配置随后由 `--branch attack|defended --m-star-path ... --canonical-clean ...` 启动，不再重复训练 clean；
+- 每个实验配置随后由一个或两个 `--branch attack|defended` 配合 `--m-star-path ... --canonical-clean ...` 启动，不再重复训练 clean；配对模式的 `status.tsv` stage 为 `attack_defended`；
 - 任一任务失败都会记为 `failed`；依赖它且尚未启动的任务同样停止，并记录 `failure_reason=dependency_failed:<job-id>`。
 - 收到 `HUP`、`INT` 或 `TERM` 时，调度器停止派发、终止并回收已启动的独立进程组，把全部未完成任务写成 `failed` 和 `scheduler_interrupted:<signal>` 后释放主机锁。
 

@@ -12,6 +12,7 @@ from mflpoison.core.types import GlobalSnapshot, ModelSpec
 from mflpoison.federated import TrainingResult
 from mflpoison.runner.canonical_clean import (
     build_canonical_clean,
+    canonical_comparison_protocol,
     load_canonical_clean,
     validate_canonical_clean,
     write_canonical_clean,
@@ -181,6 +182,64 @@ class CanonicalCleanTest(unittest.TestCase):
                     "source_tree_hash": "b" * 64,
                 },
             )
+            runtime_policy_config = self._comparison_config()
+            runtime_policy_config["evaluation"][
+                "canonical_source_policy"
+            ] = "approved_reuse"
+            self.assertEqual(
+                canonical_comparison_protocol(runtime_policy_config),
+                canonical_comparison_protocol(self._comparison_config()),
+            )
+
+            reused_source_identity = {
+                "git_commit": "c" * 40,
+                "git_dirty": False,
+                "source_tree_hash": "d" * 64,
+            }
+            validation_args = {
+                "seed": 42,
+                "partition_hash": "partition-one",
+                "m_star_hash": snapshot.content_hash,
+                "branch_schedule": (("a", "b"), ("b", "a")),
+                "victim_eval_class": 0,
+                "goal_prediction_class": 1,
+                "attack_source_sample_count": 4,
+                "comparison_protocol": runtime_policy_config,
+                "source_identity": reused_source_identity,
+            }
+            with self.assertRaisesRegex(ValueError, "source identity"):
+                validate_canonical_clean(loaded, **validation_args)
+            validate_canonical_clean(
+                loaded,
+                source_policy="approved_reuse",
+                **validation_args,
+            )
+            dirty_validation_args = dict(validation_args)
+            dirty_validation_args["source_identity"] = {
+                **reused_source_identity,
+                "git_dirty": True,
+            }
+            with self.assertRaisesRegex(ValueError, "requires clean source identities"):
+                validate_canonical_clean(
+                    loaded,
+                    source_policy="approved_reuse",
+                    **dirty_validation_args,
+                )
+            dirty_baseline = copy.deepcopy(loaded)
+            dirty_baseline["source_identity"]["git_dirty"] = True
+            dirty_baseline["m_star"]["source_identity"]["git_dirty"] = True
+            with self.assertRaisesRegex(ValueError, "requires clean source identities"):
+                validate_canonical_clean(
+                    dirty_baseline,
+                    source_policy="approved_reuse",
+                    **validation_args,
+                )
+            with self.assertRaisesRegex(ValueError, "source policy"):
+                validate_canonical_clean(
+                    loaded,
+                    source_policy="unsafe",
+                    **validation_args,
+                )
             mismatched_config = self._comparison_config()
             mismatched_config["federation"]["learning_rate"] = 0.2
             with self.assertRaisesRegex(ValueError, "training protocol"):
@@ -205,7 +264,17 @@ class CanonicalCleanTest(unittest.TestCase):
                 federation=SimpleNamespace(m_star_path=str(m_star_path))
             )
             store = ResultStore(config, root / "attack")
-            store.set_canonical_clean(loaded)
+            source_provenance = {
+                "policy": "approved_reuse",
+                "baseline_identity": dict(loaded["source_identity"]),
+                "m_star_identity": dict(loaded["m_star"]["source_identity"]),
+                "current_identity": reused_source_identity,
+                "exact_match": False,
+            }
+            store.set_canonical_clean(
+                loaded,
+                source_provenance=source_provenance,
+            )
             training = TrainingResult(
                 best_snapshot=snapshot,
                 final_snapshot=snapshot,
@@ -247,6 +316,10 @@ class CanonicalCleanTest(unittest.TestCase):
             self.assertEqual(
                 summary["canonical_clean"]["m_star_experiment_id"],
                 "mstar-run",
+            )
+            self.assertEqual(
+                summary["canonical_clean"]["source_provenance"],
+                source_provenance,
             )
 
             attack.test_metrics["attack_success_rate"] = 0.5

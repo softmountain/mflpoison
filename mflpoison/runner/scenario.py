@@ -12,6 +12,7 @@ from mflpoison.artifacts import (
     build_manifest,
     load_snapshot,
     save_snapshot,
+    source_identity,
     write_manifest,
 )
 from mflpoison.attacks import select_malicious_clients
@@ -269,6 +270,8 @@ class ScenarioRunner:
                 raise ValueError(
                     "attack_source_sample_count must be a positive integer"
                 )
+            current_source_identity = manifest_source_identity(manifest)
+            source_policy = self.config.evaluation.canonical_source_policy
             validate_canonical_clean(
                 canonical_clean,
                 seed=self.config.federation.seed,
@@ -279,9 +282,29 @@ class ScenarioRunner:
                 goal_prediction_class=self.config.attack.goal_prediction_class,
                 attack_source_sample_count=source_count,
                 comparison_protocol=manifest_config,
-                source_identity=manifest_source_identity(manifest),
+                source_identity=current_source_identity,
+                source_policy=source_policy,
             )
-            self._result_store.set_canonical_clean(canonical_clean)
+            baseline_source_identity = dict(canonical_clean["source_identity"])
+            m_star_source_identity = dict(
+                canonical_clean["m_star"]["source_identity"]
+            )
+            source_provenance = {
+                "policy": source_policy,
+                "baseline_identity": baseline_source_identity,
+                "m_star_identity": m_star_source_identity,
+                "current_identity": current_source_identity,
+                "exact_match": (
+                    baseline_source_identity == current_source_identity
+                    and m_star_source_identity == current_source_identity
+                ),
+            }
+            manifest["extra"]["canonical_clean_source"] = source_provenance
+            write_manifest(manifest, self.run_dir / "run_manifest.json")
+            self._result_store.set_canonical_clean(
+                canonical_clean,
+                source_provenance=source_provenance,
+            )
 
         lifecycle_state = None
         base_generator_artifacts = {}
@@ -346,6 +369,8 @@ class ScenarioRunner:
                 for name, result in branches.items()
             },
         }
+        if source_identity() != manifest_source_identity(manifest):
+            raise RuntimeError("runtime source identity changed during the run")
         manifest["status"] = "completed"
         write_manifest(manifest, self.run_dir / "run_manifest.json")
         return ScenarioResult(

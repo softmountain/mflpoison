@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from dataclasses import dataclass, replace
 from pathlib import Path
+from unittest import mock
 
 import torch
 
@@ -179,6 +180,13 @@ def _config(root):
 
 
 class ScenarioRunnerTest(unittest.TestCase):
+    def test_rejects_unknown_canonical_source_policy(self):
+        with tempfile.TemporaryDirectory() as directory:
+            payload = _config(Path(directory)).to_dict()
+            payload["evaluation"]["canonical_source_policy"] = "unsafe"
+            with self.assertRaisesRegex(ValueError, "canonical_source_policy"):
+                ScenarioConfig.from_mapping(payload)
+
     def test_federation_seed_fixes_random_initial_model(self):
         with tempfile.TemporaryDirectory() as directory:
             snapshots = []
@@ -233,6 +241,33 @@ class ScenarioRunnerTest(unittest.TestCase):
             summary = json.loads(result.summary_path.read_text(encoding="utf-8"))
             self.assertEqual(summary["selected_branches"], [])
             self.assertEqual(summary["branches"], {})
+
+    def test_source_identity_must_remain_stable_until_completion(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            payload = _config(root).to_dict()
+            payload["federation"]["m_star_only"] = True
+            changed_identity = {
+                "git_commit": "f" * 40,
+                "git_dirty": False,
+                "source_tree_hash": "e" * 64,
+            }
+            with mock.patch(
+                "mflpoison.runner.scenario.source_identity",
+                return_value=changed_identity,
+            ), self.assertRaisesRegex(RuntimeError, "source identity changed"):
+                ScenarioRunner(
+                    ScenarioConfig.from_mapping(payload),
+                    adapter=_Adapter(),
+                    client_trainer=_ClientTrainer(),
+                    aggregator=WeightedMean(),
+                    initial_state={"weight": torch.tensor([0.0])},
+                ).run()
+
+            manifest = json.loads(
+                (root / "run_manifest.json").read_text(encoding="utf-8")
+            )
+            self.assertNotEqual(manifest["status"], "completed")
 
     def test_attack_only_requires_canonical_clean(self):
         with tempfile.TemporaryDirectory() as directory:

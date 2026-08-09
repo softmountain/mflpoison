@@ -22,6 +22,7 @@ def _with_runtime_overrides(
     m_star_path: Optional[str],
     m_star_only: bool,
     canonical_clean_path: Optional[str],
+    canonical_source_policy: Optional[str],
 ) -> ScenarioConfig:
     payload = config.to_dict()
     if seed is not None:
@@ -39,6 +40,10 @@ def _with_runtime_overrides(
     if canonical_clean_path is not None:
         payload["evaluation"]["canonical_clean_path"] = str(
             canonical_clean_path
+        )
+    if canonical_source_policy is not None:
+        payload["evaluation"]["canonical_source_policy"] = str(
+            canonical_source_policy
         )
     return ScenarioConfig.from_mapping(payload)
 
@@ -105,22 +110,47 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         dest="canonical_clean_path",
         help="Canonical clean JSON used for attack-only Delta_ASR",
     )
+    parser.add_argument(
+        "--canonical-source-policy",
+        choices=("exact", "approved_reuse"),
+        help="Source identity policy for an explicitly reused canonical clean baseline",
+    )
     args = parser.parse_args(argv)
     if args.m_star_only and (
-        args.branches or args.m_star_path or args.canonical_clean_path
+        args.branches
+        or args.m_star_path
+        or args.canonical_clean_path
+        or args.canonical_source_policy
     ):
         parser.error(
             "--m-star-only cannot be combined with --branch, "
             "--m-star-path, or --canonical-clean"
         )
+    if args.canonical_source_policy is not None and (
+        args.canonical_clean_path is None or args.m_star_path is None
+    ):
+        parser.error(
+            "--canonical-source-policy requires --m-star-path and "
+            "--canonical-clean"
+        )
     config_path = Path(args.config)
+    loaded_config = load_scenario_config(config_path)
+    if (
+        loaded_config.evaluation.canonical_source_policy == "approved_reuse"
+        and args.canonical_source_policy is None
+    ):
+        parser.error(
+            "approved_reuse must be explicitly authorized with "
+            "--canonical-source-policy"
+        )
     config = _with_runtime_overrides(
-        load_scenario_config(config_path),
+        loaded_config,
         seed=args.seed,
         branches=args.branches,
         m_star_path=args.m_star_path,
         m_star_only=args.m_star_only,
         canonical_clean_path=args.canonical_clean_path,
+        canonical_source_policy=args.canonical_source_policy,
     )
     run_dir = (
         Path(args.run_dir)

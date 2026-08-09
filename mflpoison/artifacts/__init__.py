@@ -4,7 +4,7 @@ from .generator import (
     save_generator_artifact,
     verify_generator_lineage,
 )
-from .manifest import build_manifest, write_manifest
+from .manifest import build_manifest, source_identity, write_manifest
 from .round_record import (
     load_round_record_bundle,
     round_record_hash,
@@ -25,6 +25,7 @@ __all__ = [
     "round_record_hash",
     "save_snapshot",
     "save_synthetic",
+    "source_identity",
     "synthetic_batch_from_payload",
     "verify_generator_lineage",
     "write_manifest",

@@ -81,8 +81,11 @@ git status --short
 ### 2. 候选修改与测试
 
 - 按明确范围修改现有代码和配置。
-- 小批修改保持为未暂存、未提交候选；从本地终端只把本次明确文件同步到 BJMU，不用 GitHub 中转日常候选。
-- BJMU 不独立编辑 tracked 文件，不创建候选提交，也不向 GitHub 推送；需要修订时先改本地权威副本，再重新同步明确文件。
+- 日常修改始终在本地完成；小批修改保持为未暂存、未提交候选，不用 GitHub 中转日常候选。
+- 每批本地候选完成后，由本地终端根据本批明确变更范围，自动、单向地将对应源码、配置、测试和必要的 `AGENTS.md` 更新同步到 BJMU。这里的自动同步以“候选批次完成”为触发边界，不是每次保存文件都实时镜像。
+- 自动同步前检查 BJMU 的工作区和运行状态。若服务器存在来源不明的 tracked 修改，或有 runner、批调度器、smoke、测试、正式实验等任务正在使用仓库，则立即停止同步并报告，不覆盖文件，也不终止任务。
+- 自动同步只处理本批明确文件；不使用面向整个仓库的无条件删除或镜像，不同步 `fed_multimodal/results/`、`artifact/`、checkpoint、日志、缓存、临时图片和用户无关文件。源码删除必须作为本批明确变更单独处理。
+- BJMU 不独立编辑 tracked 文件，不创建候选提交，也不向 GitHub 推送；需要修订时先改本地权威副本，再由本地重新触发候选同步。
 - 普通修改先在本地运行当前环境能够执行的相关单测；依赖 BJMU 数据、Linux、CUDA 或服务器 Python 的测试，在两端候选内容一致后由本地终端登录 BJMU 执行。
 - 影响生产调用链的修改在 BJMU 候选上运行一次 smoke；未提交候选仅用于单测和 smoke，不用于正式实验或科学结论。
 - smoke 输出放在 `artifact/smoke/`，验收日志后立即删除该次产物、临时日志、测试缓存和空父目录。
@@ -155,6 +158,10 @@ bash scripts/run_experiments.sh \
 - 超参数仍只写入 YAML；任务输入不再携带显式 GPU。
 - 持续监控指定 GPU 池和任务状态；GPU 空闲时自动领取下一项实验，一张卡同时只运行一项任务。
 - 每个 seed 固定建立 `mstar -> clean-1..clean-5 -> canonical-aggregate -> attack-only|defended-only` 依赖链；`--experiment-branch` 对一个批次统一选择 `attack` 或 `defended`。四卡环境先并发四次 clean，第五次在首张空闲卡上自动补位。
+- 经用户明确批准复用一套已经完成的共同基线时，成对提供 `--reuse-m-star-path` 与 `--reuse-canonical-clean`；该模式只允许一个唯一 seed，并跳过 M*、五次 clean 和 canonical 聚合任务。跨批准提交复用还必须显式指定 `--canonical-source-policy approved_reuse`，默认 `exact` 仍要求源码身份完全相同。
+- `approved_reuse` 只放宽当前运行与旧基线的提交和源码树 hash 相等要求；旧 M*/五次 clean/canonical 必须能重新严格构建，且 seed、数据分区、M* hash、客户端日程、攻击方向、源类数量和共同训练协议仍须一致，两端源码身份都必须为 clean。批次与单次结果同时记录旧、新源码身份和是否精确匹配。
+- 复用预检对 canonical 与 M* 执行流式 SHA-256 前后复核；调度期间持续检查 Git 来源和文件哈希，每项任务完成时再严格重建 canonical 并核对 manifest 来源。runner 在写入 `status=completed` 前重新计算源码身份，运行期间发生变化即失败。
+- `--experiment-branches attack,defended` 在同一个 runner 任务内运行严格配对的两条支线，共享同一 M*、canonical、GAN 初始状态和客户端日程。此时 `status.tsv` 每个配置记录一个 `attack_defended` 任务，而每份 `summary.json` 必须同时包含两个分支结果。
 - 为每项任务保存独立 `train.log`、PID、退出状态和运行目录；`artifact/batches/<batch-id>/status.tsv` 固定记录 `job_id/stage/experiment/seed/repeat/depends_on/gpu/pid/status/exit_code/queued_at/started_at/finished_at/config/run_dir/failure_reason`。
 - 状态只使用 `queued/running/completed/failed`。队列未清空时持续补位；任务结束后及时释放 GPU。上游失败时，下游不启动并记为 `failed`、退出码 `125`、`failure_reason=dependency_failed:<job_id>`。
 - 调度器同时检查自身占卡、`nvidia-smi` compute 进程和显存占用，并使用主机级全局 `flock` 保证同一主机只运行一个调度器实例。`SCHEDULER_LOCK_FILE` 只允许在隔离测试或已确认不会争用 GPU 的受控环境中覆盖，不用于普通 BJMU 批次。
@@ -187,8 +194,8 @@ Delta_ASR(seed, config) =
 ## AGENTS.md 维护
 
 - 本文件只保留当前仍有效的环境、路径、入口、目录结构和工作规则；失效内容直接更新或删除。
-- 每批本地候选修改都检查是否改变上述信息，需要时把 `AGENTS.md` 纳入同一候选并从本地终端同步到 BJMU。
-- `AGENTS.md` 仍以本地副本为权威；日常更新作为未提交候选同步到 BJMU，形成大版本里程碑时再与源码一起审核、提交和推送。
+- 每批本地候选修改都检查是否改变上述信息，需要时把 `AGENTS.md` 纳入本批明确变更范围，由本地终端自动、单向同步到 BJMU。
+- `AGENTS.md` 仍以本地副本为权威；日常更新作为未提交候选按批同步，形成大版本里程碑时再与源码一起审核、提交和推送。
 - 常规安全检查直接在操作中完成，不为它们新建代码文件。不可恢复删除、正式实验目录覆盖和断点恢复仍需确认目标。
 
 ### “浓缩”口令
@@ -198,4 +205,4 @@ Delta_ASR(seed, config) =
 - 不收录密码、令牌等敏感信息，不收录单次运行进度、临时 PID、短期 artifact 路径、未经验证的推测或已经失效的内容。
 - 先向用户提交拟新增、更新或删除的条目清单，并说明建议放入 `AGENTS.md` 的位置；此时不得修改、暂存或同步文件。
 - 只有收到用户明确审核意见和批准后，才按批准清单更新 `AGENTS.md`；若用户提出修订，先更新候选清单并再次审核。
-- 批准后只在本地更新本次明确修改的 `AGENTS.md`，并同时更新或删除与新信息冲突的旧条目；作为普通未提交候选由本地终端同步到 BJMU。只有形成大版本里程碑时才暂存、展示 diff、提交并推送。
+- 批准后只在本地更新本次明确修改的 `AGENTS.md`，并同时更新或删除与新信息冲突的旧条目；作为普通未提交候选，由本地终端在该候选批次完成后自动、单向同步到 BJMU。只有形成大版本里程碑时才暂存、展示 diff、提交并推送。

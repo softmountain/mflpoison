@@ -10,11 +10,18 @@ options:
   --gpus LIST                    comma-separated GPU pool (default: 0,1,2,3)
   --canonical-clean-config PATH configuration used for M* and clean replicas
   --experiment-branch NAME      attack or defended (default: attack)
+  --experiment-branches LIST    comma-separated branches in one runner task
+  --reuse-m-star-path PATH      reuse an existing completed common M*
+  --reuse-canonical-clean PATH  reuse its validated canonical clean JSON
+  --canonical-source-policy P   exact or approved_reuse (default: exact)
   --monitor-interval SECONDS     scheduler polling interval (default: 30)
   --idle-memory-mib MIB          maximum idle GPU memory use (default: 1024)
 
-The scheduler creates this dependency chain for every seed:
+Normally the scheduler creates this dependency chain for every seed:
   mstar -> clean-1..clean-5 -> canonical-aggregate -> selected branch jobs
+
+The two reuse paths skip that chain and must be supplied together. Multiple
+experiment branches run inside one paired runner task per CONFIG:SEED.
 
 Environment overrides:
   PYTHON_BIN, ARTIFACT_ROOT, NVIDIA_SMI_BIN, BATCH_ID, SCHEDULER_LOCK_FILE
@@ -37,6 +44,13 @@ scheduler_lock_file="${SCHEDULER_LOCK_FILE:-/tmp/mflpoison-run-experiments.lock}
 gpu_csv="0,1,2,3"
 canonical_config="configs/experiments/ucf101_fdmm_dtm_poison_0to1.yaml"
 experiment_branch="attack"
+experiment_branches_csv=""
+experiment_branch_option_seen=0
+experiment_branches_option_seen=0
+reuse_m_star_path=""
+reuse_canonical_clean=""
+canonical_source_policy="exact"
+canonical_source_policy_seen=0
 monitor_interval="30"
 idle_memory_mib="1024"
 clean_replicas=5
@@ -58,6 +72,29 @@ while [ "$#" -gt 0 ]; do
     --experiment-branch)
       [ "$#" -ge 2 ] || die "--experiment-branch requires attack or defended"
       experiment_branch="$2"
+      experiment_branch_option_seen=1
+      shift 2
+      ;;
+    --experiment-branches)
+      [ "$#" -ge 2 ] || die "--experiment-branches requires a comma-separated list"
+      experiment_branches_csv="$2"
+      experiment_branches_option_seen=1
+      shift 2
+      ;;
+    --reuse-m-star-path)
+      [ "$#" -ge 2 ] || die "--reuse-m-star-path requires a path"
+      reuse_m_star_path="$2"
+      shift 2
+      ;;
+    --reuse-canonical-clean)
+      [ "$#" -ge 2 ] || die "--reuse-canonical-clean requires a path"
+      reuse_canonical_clean="$2"
+      shift 2
+      ;;
+    --canonical-source-policy)
+      [ "$#" -ge 2 ] || die "--canonical-source-policy requires exact or approved_reuse"
+      canonical_source_policy="$2"
+      canonical_source_policy_seen=1
       shift 2
       ;;
     --monitor-interval)
@@ -95,10 +132,45 @@ done
   usage >&2
   exit 2
 }
-case "$experiment_branch" in
-  attack|defended) ;;
-  *) die "--experiment-branch must be attack or defended" ;;
+[ "$experiment_branch_option_seen" -eq 0 ] || [ "$experiment_branches_option_seen" -eq 0 ] \
+  || die "--experiment-branch and --experiment-branches cannot be combined"
+if [ "$experiment_branches_option_seen" -eq 0 ]; then
+  experiment_branches_csv="$experiment_branch"
+fi
+declare -a experiment_branches=()
+declare -A experiment_branch_seen=()
+IFS=',' read -r -a requested_branches <<< "$experiment_branches_csv"
+for branch in "${requested_branches[@]}"; do
+  branch="${branch//[[:space:]]/}"
+  case "$branch" in
+    attack|defended) ;;
+    *)
+      if [ "$experiment_branches_option_seen" -eq 1 ]; then
+        die "--experiment-branches accepts only attack and defended"
+      fi
+      die "--experiment-branch must be attack or defended"
+      ;;
+  esac
+  [ -z "${experiment_branch_seen[$branch]:-}" ] \
+    || die "duplicate experiment branch: $branch"
+  experiment_branch_seen[$branch]=1
+  experiment_branches+=("$branch")
+done
+[ "${#experiment_branches[@]}" -gt 0 ] || die "experiment branch list cannot be empty"
+case "$canonical_source_policy" in
+  exact|approved_reuse) ;;
+  *) die "--canonical-source-policy must be exact or approved_reuse" ;;
 esac
+if { [ -n "$reuse_m_star_path" ] && [ -z "$reuse_canonical_clean" ]; } \
+  || { [ -z "$reuse_m_star_path" ] && [ -n "$reuse_canonical_clean" ]; }; then
+  die "--reuse-m-star-path and --reuse-canonical-clean must be supplied together"
+fi
+reuse_mode=0
+if [ -n "$reuse_m_star_path" ]; then
+  reuse_mode=1
+elif [ "$canonical_source_policy_seen" -eq 1 ]; then
+  die "--canonical-source-policy requires reused M* and canonical clean paths"
+fi
 [[ "$idle_memory_mib" =~ ^[0-9]+$ ]] || die "--idle-memory-mib must be an integer"
 [[ "$monitor_interval" =~ ^[0-9]+([.][0-9]+)?$ ]] \
   || die "--monitor-interval must be a non-negative number"
@@ -151,7 +223,17 @@ resolve_experiment_config() {
   printf '%s' "$resolved"
 }
 
-canonical_config="$(resolve_experiment_config "$canonical_config")" || exit $?
+if [ "$reuse_mode" -eq 0 ]; then
+  canonical_config="$(resolve_experiment_config "$canonical_config")" || exit $?
+else
+  [ -f "$reuse_m_star_path" ] || die "reused M* not found: $reuse_m_star_path"
+  [ -f "$reuse_canonical_clean" ] \
+    || die "reused canonical clean not found: $reuse_canonical_clean"
+  reuse_m_star_path="$(realpath -e -- "$reuse_m_star_path")" \
+    || die "cannot resolve reused M*: $reuse_m_star_path"
+  reuse_canonical_clean="$(realpath -e -- "$reuse_canonical_clean")" \
+    || die "cannot resolve reused canonical clean: $reuse_canonical_clean"
+fi
 lock_parent="$(dirname -- "$scheduler_lock_file")"
 [ -d "$lock_parent" ] || die "scheduler lock directory does not exist: $lock_parent"
 exec 9>>"$scheduler_lock_file"
@@ -192,6 +274,162 @@ for requested in "${requested_jobs[@]}"; do
   fi
 done
 
+if [ "$reuse_mode" -eq 1 ] && [ "${#seed_order[@]}" -ne 1 ]; then
+  die "reused canonical clean mode requires exactly one unique seed"
+fi
+
+experiment_stage="${experiment_branches[0]}"
+for branch_index in "${!experiment_branches[@]}"; do
+  [ "$branch_index" -gt 0 ] || continue
+  experiment_stage="${experiment_stage}_${experiment_branches[$branch_index]}"
+done
+
+expected_git_head="$(git -C "$repo_root" rev-parse HEAD)" \
+  || die "cannot resolve full Git HEAD"
+if [ "$reuse_mode" -eq 1 ]; then
+  [ -z "$(git -C "$repo_root" status --porcelain=v1 --untracked-files=all)" ] \
+    || die "reused canonical clean mode requires a clean repository"
+  reuse_metadata_path="$batch_dir/reused_baseline.json"
+  branch_csv="$(IFS=,; printf '%s' "${experiment_branches[*]}")"
+  config_csv="$(IFS=,; printf '%s' "${input_configs[*]}")"
+  if ! "$python_bin" - \
+    "mflpoison_reuse_preflight" \
+    "$reuse_canonical_clean" \
+    "$reuse_m_star_path" \
+    "${seed_order[0]}" \
+    "$canonical_source_policy" \
+    "$branch_csv" \
+    "$config_csv" \
+    "$reuse_metadata_path" \
+    "$repo_root" <<'PY'
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+from mflpoison.artifacts.manifest import _source_tree_hash
+from mflpoison.core.config import ScenarioConfig, load_scenario_config
+from mflpoison.core.hashing import file_sha256
+from mflpoison.runner.canonical_clean import (
+    canonical_comparison_protocol,
+    load_canonical_clean,
+)
+
+(
+    marker,
+    canonical_arg,
+    m_star_arg,
+    seed_arg,
+    policy,
+    branch_csv,
+    config_csv,
+    metadata_arg,
+    repo_arg,
+) = sys.argv[1:]
+if marker != "mflpoison_reuse_preflight":
+    raise ValueError("invalid reuse preflight marker")
+
+canonical_path = Path(canonical_arg).resolve()
+m_star_path = Path(m_star_arg).resolve()
+metadata_path = Path(metadata_arg)
+repo_root = Path(repo_arg).resolve()
+seed = int(seed_arg)
+branches = tuple(item for item in branch_csv.split(",") if item)
+configs = tuple(Path(item).resolve() for item in config_csv.split(",") if item)
+canonical_sha256_before = file_sha256(canonical_path)
+m_star_sha256_before = file_sha256(m_star_path)
+canonical = load_canonical_clean(canonical_path)
+canonical_m_star = Path(str(canonical["m_star"]["path"])).resolve()
+if canonical_m_star != m_star_path:
+    raise ValueError("reused M* path differs from the canonical clean M*")
+if int(canonical["seed"]) != seed:
+    raise ValueError("reused canonical clean seed does not match requested seed")
+if not configs:
+    raise ValueError("reuse preflight received no experiment configs")
+
+baseline_identity = dict(canonical["source_identity"])
+m_star_identity = dict(canonical["m_star"]["source_identity"])
+if baseline_identity != m_star_identity:
+    raise ValueError("canonical clean and M* source identities differ")
+if baseline_identity.get("git_dirty") is not False:
+    raise ValueError("reused baseline source identity must be clean")
+
+git_commit = subprocess.check_output(
+    ["git", "-C", str(repo_root), "rev-parse", "HEAD"], text=True
+).strip()
+git_status = subprocess.check_output(
+    ["git", "-C", str(repo_root), "status", "--porcelain=v1", "--untracked-files=all"],
+    text=True,
+)
+source_tree_hash = _source_tree_hash(repo_root)
+current_identity = {
+    "git_commit": git_commit,
+    "git_dirty": bool(git_status),
+    "source_tree_hash": source_tree_hash,
+}
+if current_identity["git_dirty"] or not current_identity["source_tree_hash"]:
+    raise ValueError("current source identity must be complete and clean")
+exact_match = current_identity == baseline_identity
+if policy == "exact" and not exact_match:
+    raise ValueError("exact canonical source policy requires matching source identity")
+
+for config_path in configs:
+    payload = load_scenario_config(config_path).to_dict()
+    payload["federation"]["seed"] = seed
+    payload["generator"]["seed"] = seed
+    payload["federation"]["branches"] = list(branches)
+    payload["federation"]["m_star_path"] = str(m_star_path)
+    payload["evaluation"]["canonical_clean_path"] = str(canonical_path)
+    payload["evaluation"]["canonical_source_policy"] = policy
+    resolved = ScenarioConfig.from_mapping(payload)
+    if tuple(resolved.selected_branches) != branches:
+        raise ValueError(f"branch selection mismatch: {config_path}")
+    if canonical_comparison_protocol(resolved.to_dict()) != canonical["comparison_protocol"]:
+        raise ValueError(f"canonical comparison protocol mismatch: {config_path}")
+
+canonical_sha256_after = file_sha256(canonical_path)
+m_star_sha256_after = file_sha256(m_star_path)
+if canonical_sha256_before != canonical_sha256_after:
+    raise ValueError("reused canonical clean changed during preflight")
+if m_star_sha256_before != m_star_sha256_after:
+    raise ValueError("reused M* changed during preflight")
+
+metadata = {
+    "schema_version": 1,
+    "kind": "reused_canonical_clean",
+    "seed": seed,
+    "source_policy": policy,
+    "source_identity_exact_match": exact_match,
+    "baseline_source_identity": baseline_identity,
+    "current_source_identity": current_identity,
+    "m_star": {
+        "path": str(m_star_path),
+        "sha256": m_star_sha256_before,
+        "snapshot_hash": canonical["m_star"]["snapshot_hash"],
+        "run_dir": canonical["m_star"]["run_dir"],
+    },
+    "canonical_clean": {
+        "path": str(canonical_path),
+        "sha256": canonical_sha256_before,
+        "replica_count": canonical["replica_count"],
+        "partition_hash": canonical["partition_hash"],
+        "asr_canonical_clean": canonical["asr_canonical_clean"],
+    },
+    "experiment_branches": list(branches),
+    "config_count": len(configs),
+    "configs": [str(path) for path in configs],
+}
+temporary = metadata_path.with_suffix(metadata_path.suffix + ".tmp")
+with temporary.open("w", encoding="utf-8") as handle:
+    json.dump(metadata, handle, ensure_ascii=False, indent=2, sort_keys=True)
+    handle.write("\n")
+temporary.replace(metadata_path)
+PY
+  then
+    die "reused M* and canonical clean preflight failed"
+  fi
+fi
+
 declare -a job_ids=() job_stages=() job_names=() job_seeds=() job_repeats=()
 declare -a job_depends=() job_gpus=() job_pids=() job_statuses=()
 declare -a job_exit_codes=() job_queued_at=() job_started_at=() job_finished_at=()
@@ -228,42 +466,52 @@ experiment_path() {
   printf '%s' "${relative%.*}"
 }
 
-for seed in "${seed_order[@]}"; do
-  m_star_id="mstar-seed-$seed"
-  m_star_run_id="${batch_id}_seed-${seed}_git-${git_label}_${m_star_id}"
-  m_star_run_dir="$artifact_root/canonical_clean/m_star/$m_star_run_id"
-  seed_m_star_path[$seed]="$m_star_run_dir/checkpoints/m_star.pt"
-  seed_baseline_path[$seed]="$batch_dir/canonical_clean_seed-${seed}.json"
-  add_job "$m_star_id" "mstar" "canonical-clean" "$seed" "" "" \
-    "$canonical_config" "$m_star_run_dir"
+if [ "$reuse_mode" -eq 1 ]; then
+  seed="${seed_order[0]}"
+  seed_m_star_path[$seed]="$reuse_m_star_path"
+  seed_baseline_path[$seed]="$reuse_canonical_clean"
+else
+  for seed in "${seed_order[@]}"; do
+    m_star_id="mstar-seed-$seed"
+    m_star_run_id="${batch_id}_seed-${seed}_git-${git_label}_${m_star_id}"
+    m_star_run_dir="$artifact_root/canonical_clean/m_star/$m_star_run_id"
+    seed_m_star_path[$seed]="$m_star_run_dir/checkpoints/m_star.pt"
+    seed_baseline_path[$seed]="$batch_dir/canonical_clean_seed-${seed}.json"
+    add_job "$m_star_id" "mstar" "canonical-clean" "$seed" "" "" \
+      "$canonical_config" "$m_star_run_dir"
 
-  clean_dependencies=""
-  for repeat in $(seq 1 "$clean_replicas"); do
-    clean_id="clean-seed-${seed}-repeat-${repeat}"
-    clean_run_id="${batch_id}_seed-${seed}_git-${git_label}_${clean_id}"
-    clean_run_dir="$artifact_root/canonical_clean/clean-repeat-${repeat}/$clean_run_id"
-    add_job "$clean_id" "clean" "canonical-clean" "$seed" "$repeat" \
-      "$m_star_id" "$canonical_config" "$clean_run_dir"
-    if [ -z "$clean_dependencies" ]; then
-      clean_dependencies="$clean_id"
-    else
-      clean_dependencies="$clean_dependencies,$clean_id"
-    fi
+    clean_dependencies=""
+    for repeat in $(seq 1 "$clean_replicas"); do
+      clean_id="clean-seed-${seed}-repeat-${repeat}"
+      clean_run_id="${batch_id}_seed-${seed}_git-${git_label}_${clean_id}"
+      clean_run_dir="$artifact_root/canonical_clean/clean-repeat-${repeat}/$clean_run_id"
+      add_job "$clean_id" "clean" "canonical-clean" "$seed" "$repeat" \
+        "$m_star_id" "$canonical_config" "$clean_run_dir"
+      if [ -z "$clean_dependencies" ]; then
+        clean_dependencies="$clean_id"
+      else
+        clean_dependencies="$clean_dependencies,$clean_id"
+      fi
+    done
+    aggregate_id="canonical-aggregate-seed-$seed"
+    add_job "$aggregate_id" "canonical_aggregate" "canonical-clean" "$seed" "" \
+      "$clean_dependencies" "$canonical_config" "$batch_dir"
   done
-  aggregate_id="canonical-aggregate-seed-$seed"
-  add_job "$aggregate_id" "canonical_aggregate" "canonical-clean" "$seed" "" \
-    "$clean_dependencies" "$canonical_config" "$batch_dir"
-done
+fi
 
 for input_index in "${!input_configs[@]}"; do
   config="${input_configs[$input_index]}"
   seed="${input_seeds[$input_index]}"
   ordinal="$(printf '%03d' "$((input_index + 1))")"
-  experiment_id="${experiment_branch}-${ordinal}-seed-${seed}"
+  experiment_id="${experiment_stage}-${ordinal}-seed-${seed}"
   experiment_run_id="${batch_id}_seed-${seed}_git-${git_label}_${experiment_id}"
   experiment_run_dir="$artifact_root/$(experiment_path "$config")/$experiment_run_id"
-  add_job "$experiment_id" "$experiment_branch" "$(basename "${config%.*}")" "$seed" "" \
-    "canonical-aggregate-seed-$seed" "$config" "$experiment_run_dir"
+  experiment_dependency=""
+  if [ "$reuse_mode" -eq 0 ]; then
+    experiment_dependency="canonical-aggregate-seed-$seed"
+  fi
+  add_job "$experiment_id" "$experiment_stage" "$(basename "${config%.*}")" "$seed" "" \
+    "$experiment_dependency" "$config" "$experiment_run_dir"
 done
 
 write_status() {
@@ -432,12 +680,52 @@ manifest_is_completed() {
     "$1" >/dev/null 2>&1
 }
 
+branch_summary_is_completed() {
+  "$python_bin" -c \
+    'import json, sys; manifest=json.load(open(sys.argv[1], encoding="utf-8")); summary=json.load(open(sys.argv[2], encoding="utf-8")); expected={item for item in sys.argv[3].split(",") if item}; metadata_path=sys.argv[4]; actual=summary.get("branches", {}); valid=isinstance(manifest, dict) and manifest.get("status") == "completed" and isinstance(actual, dict) and set(actual) == expected; metadata=json.load(open(metadata_path, encoding="utf-8")) if valid and metadata_path else None; expected_identity=None if metadata is None else metadata["current_source_identity"]; manifest_identity={key: manifest.get(key) for key in ("git_commit", "git_dirty", "source_tree_hash")}; provenance=manifest.get("extra", {}).get("canonical_clean_source", {}); valid=valid and (metadata is None or (manifest_identity == expected_identity and provenance.get("current_identity") == expected_identity and provenance.get("baseline_identity") == metadata["baseline_source_identity"] and provenance.get("m_star_identity") == metadata["baseline_source_identity"] and provenance.get("policy") == metadata["source_policy"] and provenance.get("exact_match") == metadata["source_identity_exact_match"])); raise SystemExit(0 if valid else 1)' \
+    "$1" "$2" "$3" "$4" >/dev/null 2>&1
+}
+
+reuse_repository_is_stable() {
+  [ "$reuse_mode" -eq 1 ] || return 0
+  [ "$(git -C "$repo_root" rev-parse HEAD 2>/dev/null)" = "$expected_git_head" ] \
+    || return 1
+  [ -z "$(git -C "$repo_root" status --porcelain=v1 --untracked-files=all 2>/dev/null)" ]
+}
+
+reuse_baseline_is_stable() {
+  [ "$reuse_mode" -eq 1 ] || return 0
+  "$python_bin" -c \
+    '_marker="mflpoison_reuse_baseline_state_check"; import json, sys; from pathlib import Path; from mflpoison.core.hashing import file_sha256; from mflpoison.runner.canonical_clean import load_canonical_clean; metadata=json.load(open(sys.argv[1], encoding="utf-8")); canonical_path=Path(sys.argv[2]).resolve(); m_star_path=Path(sys.argv[3]).resolve(); canonical_before=file_sha256(canonical_path); m_star_before=file_sha256(m_star_path); canonical=load_canonical_clean(canonical_path); canonical_after=file_sha256(canonical_path); m_star_after=file_sha256(m_star_path); valid=canonical_before == metadata["canonical_clean"]["sha256"] == canonical_after and m_star_before == metadata["m_star"]["sha256"] == m_star_after and Path(str(canonical["m_star"]["path"])).resolve() == m_star_path and str(canonical["m_star"]["snapshot_hash"]) == str(metadata["m_star"]["snapshot_hash"]); raise SystemExit(0 if valid else 1)' \
+    "$reuse_metadata_path" "$reuse_canonical_clean" "$reuse_m_star_path" \
+    >/dev/null 2>&1
+}
+
+reuse_baseline_files_are_stable() {
+  [ "$reuse_mode" -eq 1 ] || return 0
+  "$python_bin" -c \
+    '_marker="mflpoison_reuse_baseline_file_check"; import json, sys; from mflpoison.core.hashing import file_sha256; metadata=json.load(open(sys.argv[1], encoding="utf-8")); valid=file_sha256(sys.argv[2]) == metadata["canonical_clean"]["sha256"] and file_sha256(sys.argv[3]) == metadata["m_star"]["sha256"]; raise SystemExit(0 if valid else 1)' \
+    "$reuse_metadata_path" "$reuse_canonical_clean" "$reuse_m_star_path" \
+    >/dev/null 2>&1
+}
+
+reuse_state_is_stable() {
+  reuse_repository_is_stable && reuse_baseline_is_stable
+}
+
+reuse_quick_state_is_stable() {
+  reuse_repository_is_stable && reuse_baseline_files_are_stable
+}
+
 start_gpu_job() {
   local index="$1" gpu="$2" stage seed run_dir log_path pid
   local -a command=()
   stage="${job_stages[$index]}"
   seed="${job_seeds[$index]}"
   run_dir="${job_run_dirs[$index]}"
+  if ! reuse_state_is_stable; then
+    abort_scheduler "source_or_reused_baseline_changed" 125 1
+  fi
   if [ -e "$run_dir" ] || ! mkdir -p "$run_dir"; then
     job_statuses[$index]="failed"
     job_exit_codes[$index]="73"
@@ -459,12 +747,17 @@ start_gpu_job() {
     clean)
       command+=(--branch clean --m-star-path "${seed_m_star_path[$seed]}")
       ;;
-    attack|defended)
+    attack|defended|attack_defended|defended_attack)
+      for branch in "${experiment_branches[@]}"; do
+        command+=(--branch "$branch")
+      done
       command+=(
-        --branch "$stage"
         --m-star-path "${seed_m_star_path[$seed]}"
         --canonical-clean "${seed_baseline_path[$seed]}"
       )
+      if [ "$reuse_mode" -eq 1 ]; then
+        command+=(--canonical-source-policy "$canonical_source_policy")
+      fi
       ;;
     *)
       die "cannot start non-GPU stage on GPU: $stage"
@@ -532,7 +825,7 @@ run_canonical_aggregate() {
 }
 
 reap_finished_jobs() {
-  local index pid gpu rc
+  local index pid gpu rc artifacts_completed branch_csv expected_source_metadata
   scheduler_progress=0
   for index in "${!job_ids[@]}"; do
     [ "${job_statuses[$index]}" = "running" ] || continue
@@ -544,11 +837,37 @@ reap_finished_jobs() {
     wait "$pid"
     rc=$?
     handle_pending_signal
+    if ! reuse_state_is_stable; then
+      abort_scheduler "source_or_reused_baseline_changed" 125 1
+    fi
     gpu="${job_gpus[$index]}"
     unset "gpu_job[$gpu]"
     job_exit_codes[$index]="$rc"
     job_finished_at[$index]="$(timestamp)"
-    if [ "$rc" -eq 0 ] && manifest_is_completed "${job_run_dirs[$index]}/run_manifest.json"; then
+    artifacts_completed=1
+    if [ "$rc" -eq 0 ]; then
+      case "${job_stages[$index]}" in
+        attack|defended|attack_defended|defended_attack)
+          branch_csv="$(IFS=,; printf '%s' "${experiment_branches[*]}")"
+          expected_source_metadata=""
+          if [ "$reuse_mode" -eq 1 ]; then
+            expected_source_metadata="$reuse_metadata_path"
+          fi
+          branch_summary_is_completed \
+            "${job_run_dirs[$index]}/run_manifest.json" \
+            "${job_run_dirs[$index]}/summary.json" \
+            "$branch_csv" \
+            "$expected_source_metadata" || artifacts_completed=0
+          ;;
+        *)
+          manifest_is_completed "${job_run_dirs[$index]}/run_manifest.json" \
+            || artifacts_completed=0
+          ;;
+      esac
+    else
+      artifacts_completed=0
+    fi
+    if [ "$rc" -eq 0 ] && [ "$artifacts_completed" -eq 1 ]; then
       job_statuses[$index]="completed"
     else
       job_statuses[$index]="failed"
@@ -614,6 +933,9 @@ echo "batch $batch_id queued; status: $status_file"
 
 while ! all_jobs_finished; do
   handle_pending_signal
+  if ! reuse_quick_state_is_stable; then
+    abort_scheduler "source_or_reused_baseline_changed" 125 1
+  fi
   reap_finished_jobs
   handle_pending_signal
   mark_dependency_failures

@@ -50,11 +50,41 @@ class ResultStore:
         self.run_dir = Path(run_dir)
         self._seen_generator_artifacts = set()
         self._canonical_clean = None
+        self._canonical_source_provenance = None
 
-    def set_canonical_clean(self, payload: Mapping[str, Any]) -> None:
+    def set_canonical_clean(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        source_provenance: Mapping[str, Any] = None,
+    ) -> None:
         if payload.get("kind") != "canonical_clean":
             raise ValueError("canonical clean artifact has the wrong kind")
         self._canonical_clean = dict(payload)
+        if source_provenance is None:
+            baseline_identity = dict(payload["source_identity"])
+            m_star_identity = dict(payload["m_star"]["source_identity"])
+            evaluation = getattr(self.config, "evaluation", None)
+            policy = getattr(evaluation, "canonical_source_policy", "exact")
+            source_provenance = {
+                "policy": policy,
+                "baseline_identity": baseline_identity,
+                "m_star_identity": m_star_identity,
+                "current_identity": baseline_identity,
+                "exact_match": baseline_identity == m_star_identity,
+            }
+        required = {
+            "policy",
+            "baseline_identity",
+            "m_star_identity",
+            "current_identity",
+            "exact_match",
+        }
+        if not isinstance(source_provenance, Mapping) or not required.issubset(
+            source_provenance
+        ):
+            raise ValueError("canonical clean source provenance is incomplete")
+        self._canonical_source_provenance = dict(source_provenance)
 
     def persist_records(self, phase: str, records: Sequence[Any]) -> None:
         bundle_path = self.run_dir / "round_records.pt"
@@ -166,6 +196,7 @@ class ResultStore:
                     "comparison_protocol"
                 ],
                 "source_identity": canonical_clean["source_identity"],
+                "source_provenance": self._canonical_source_provenance,
             }
         for name in ("attack", "defended"):
             if name in branches:

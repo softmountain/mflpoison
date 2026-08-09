@@ -191,7 +191,11 @@ def build_default_runner(
             + ", ".join(protected_overrides)
         )
     generator_overrides["lr_g"] = config.generator.learning_rate
-    generator_overrides["lr_d"] = config.generator.learning_rate
+    generator_overrides["lr_d"] = (
+        config.generator.learning_rate
+        if config.generator.discriminator_learning_rate is None
+        else config.generator.discriminator_learning_rate
+    )
     if generator_variant == "dtm":
         from fed_multimodal.dtm_poison_gan import DTMGANConfig
 

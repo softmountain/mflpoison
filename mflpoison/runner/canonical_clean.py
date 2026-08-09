@@ -51,7 +51,7 @@ def canonical_comparison_protocol(config: Mapping[str, Any]) -> Dict[str, Any]:
         "evaluation": {
             key: value
             for key, value in evaluation.items()
-            if key != "canonical_clean_path"
+            if key not in {"canonical_clean_path", "canonical_source_policy"}
         },
     }
     return json.loads(json.dumps(protocol, sort_keys=True))
@@ -69,6 +69,25 @@ def manifest_source_identity(manifest: Mapping[str, Any]) -> Dict[str, Any]:
         or not identity["source_tree_hash"]
     ):
         raise ValueError("run manifest source identity is incomplete")
+    return identity
+
+
+def _validated_source_identity(
+    value: Mapping[str, Any], *, label: str
+) -> Dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{label} source identity is missing")
+    identity = {
+        "git_commit": value.get("git_commit"),
+        "git_dirty": value.get("git_dirty"),
+        "source_tree_hash": value.get("source_tree_hash"),
+    }
+    if (
+        not identity["git_commit"]
+        or not isinstance(identity["git_dirty"], bool)
+        or not identity["source_tree_hash"]
+    ):
+        raise ValueError(f"{label} source identity is incomplete")
     return identity
 
 
@@ -475,7 +494,10 @@ def validate_canonical_clean(
     attack_source_sample_count: int,
     comparison_protocol: Mapping[str, Any],
     source_identity: Mapping[str, Any],
+    source_policy: str = "exact",
 ) -> None:
+    if source_policy not in {"exact", "approved_reuse"}:
+        raise ValueError("canonical source policy must be exact or approved_reuse")
     if int(payload["seed"]) != int(seed):
         raise ValueError("canonical clean seed does not match the attack run")
     if str(payload["partition_hash"]) != str(partition_hash):
@@ -503,10 +525,42 @@ def validate_canonical_clean(
         raise ValueError(
             "canonical clean training protocol does not match the attack run"
         )
-    if dict(payload["source_identity"]) != dict(source_identity):
-        raise ValueError("canonical clean source identity does not match the attack run")
-    if dict(payload["m_star"]["source_identity"]) != dict(source_identity):
-        raise ValueError("canonical clean M* source identity does not match the attack run")
+    baseline_identity = _validated_source_identity(
+        payload["source_identity"], label="canonical clean"
+    )
+    m_star_identity = _validated_source_identity(
+        payload["m_star"]["source_identity"], label="canonical clean M*"
+    )
+    current_identity = _validated_source_identity(
+        source_identity, label="attack run"
+    )
+    if baseline_identity != m_star_identity:
+        raise ValueError("canonical clean M* source identity differs from its baseline")
+    if source_policy == "exact":
+        if baseline_identity != current_identity:
+            raise ValueError(
+                "canonical clean source identity does not match the attack run"
+            )
+        if m_star_identity != current_identity:
+            raise ValueError(
+                "canonical clean M* source identity does not match the attack run"
+            )
+        return
+
+    dirty_sources = [
+        label
+        for label, identity in (
+            ("canonical clean", baseline_identity),
+            ("canonical clean M*", m_star_identity),
+            ("attack run", current_identity),
+        )
+        if identity["git_dirty"] is not False
+    ]
+    if dirty_sources:
+        raise ValueError(
+            "approved canonical reuse requires clean source identities: "
+            + ", ".join(dirty_sources)
+        )
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:

@@ -127,6 +127,17 @@ def _runtime_metadata() -> Dict[str, Any]:
     }
 
 
+def source_identity(cwd: Optional[Path] = None) -> Dict[str, Any]:
+    git_status = _git_output(
+        ["status", "--porcelain=v1", "--untracked-files=all"], cwd
+    )
+    return {
+        "git_commit": _git_output(["rev-parse", "HEAD"], cwd),
+        "git_dirty": None if git_status is None else bool(git_status),
+        "source_tree_hash": _source_tree_hash(cwd),
+    }
+
+
 def build_manifest(
     experiment_id: str,
     config: Mapping[str, Any],
@@ -134,19 +145,17 @@ def build_manifest(
     extra: Optional[Mapping[str, Any]] = None,
     cwd: Optional[Path] = None,
 ) -> Dict[str, Any]:
-    git_status = _git_output(
-        ["status", "--porcelain=v1", "--untracked-files=all"], cwd
-    )
+    identity = source_identity(cwd)
     manifest = {
         "schema_version": 2,
         "experiment_id": str(experiment_id),
         "created_at": datetime.now(timezone.utc).isoformat(),
         "config": dict(config),
         "seed": int(seed),
-        "git_commit": _git_output(["rev-parse", "HEAD"], cwd),
+        "git_commit": identity["git_commit"],
         "git_branch": _git_output(["branch", "--show-current"], cwd),
-        "git_dirty": None if git_status is None else bool(git_status),
-        "source_tree_hash": _source_tree_hash(cwd),
+        "git_dirty": identity["git_dirty"],
+        "source_tree_hash": identity["source_tree_hash"],
         "runtime": _runtime_metadata(),
     }
     if extra:

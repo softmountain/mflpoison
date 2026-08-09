@@ -166,6 +166,7 @@ class GeneratorConfig:
     epochs: int = 1
     batch_size: int = 32
     learning_rate: float = 0.0002
+    discriminator_learning_rate: Optional[float] = None
     seed: int = 42
     checkpoint_dir: Optional[str] = None
     loss: Mapping[str, Any] = field(default_factory=dict)
@@ -180,6 +181,13 @@ class GeneratorConfig:
             raise ValueError("generator interval, epoch, and batch counts must be positive")
         if float(self.learning_rate) <= 0:
             raise ValueError("generator.learning_rate must be positive")
+        if (
+            self.discriminator_learning_rate is not None
+            and float(self.discriminator_learning_rate) <= 0
+        ):
+            raise ValueError(
+                "generator.discriminator_learning_rate must be positive"
+            )
 
 
 @dataclass(frozen=True)
@@ -246,6 +254,7 @@ class EvaluationConfig:
     evaluate_test: bool = True
     evaluate_attack: bool = True
     canonical_clean_path: Optional[str] = None
+    canonical_source_policy: str = "exact"
     options: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
@@ -254,6 +263,10 @@ class EvaluationConfig:
             self.canonical_clean_path
         ):
             raise ValueError("evaluation.canonical_clean_path cannot be empty")
+        if self.canonical_source_policy not in {"exact", "approved_reuse"}:
+            raise ValueError(
+                "evaluation.canonical_source_policy must be exact or approved_reuse"
+            )
 
 
 @dataclass(frozen=True)
