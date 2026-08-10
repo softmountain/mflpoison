@@ -117,6 +117,51 @@ class ScenarioConfigTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "discriminator_learning_rate"):
             ScenarioConfig.from_mapping(config)
 
+    def test_generator_supports_explicit_steps_per_batch(self):
+        loaded = ScenarioConfig.from_mapping(valid_config())
+        self.assertEqual(loaded.generator.generator_steps_per_batch, 3)
+        self.assertEqual(loaded.generator.discriminator_steps_per_batch, 1)
+
+        config = valid_config()
+        config["generator"].update(
+            generator_steps_per_batch=10,
+            discriminator_steps_per_batch=1,
+        )
+        loaded = ScenarioConfig.from_mapping(config)
+        self.assertEqual(loaded.generator.generator_steps_per_batch, 10)
+        self.assertEqual(loaded.generator.discriminator_steps_per_batch, 1)
+
+        for field_name in (
+            "generator_steps_per_batch",
+            "discriminator_steps_per_batch",
+        ):
+            for invalid in (0, -1, 1.5, True):
+                with self.subTest(field_name=field_name, invalid=invalid):
+                    config = valid_config()
+                    config["generator"][field_name] = invalid
+                    with self.assertRaisesRegex(ValueError, field_name):
+                        ScenarioConfig.from_mapping(config)
+
+    def test_generator_migrates_legacy_backend_step_aliases(self):
+        config = valid_config()
+        config["generator"].update(
+            loss={"d_steps": 2},
+            options={"g_steps": 10},
+        )
+        loaded = ScenarioConfig.from_mapping(config)
+        self.assertEqual(loaded.generator.generator_steps_per_batch, 10)
+        self.assertEqual(loaded.generator.discriminator_steps_per_batch, 2)
+        self.assertNotIn("g_steps", loaded.generator.options)
+        self.assertNotIn("d_steps", loaded.generator.loss)
+
+        config = valid_config()
+        config["generator"].update(
+            generator_steps_per_batch=10,
+            options={"g_steps": 10},
+        )
+        with self.assertRaisesRegex(ValueError, "conflicts"):
+            ScenarioConfig.from_mapping(config)
+
     def test_runner_requires_explicit_cli_authorization_for_approved_reuse(self):
         config = valid_config()
         config["evaluation"].update(
@@ -275,6 +320,61 @@ class ScenarioConfigTest(unittest.TestCase):
                 self.assertEqual(config.generator.epochs, epochs)
                 self.assertEqual(config.generator.learning_rate, 3e-4)
                 self.assertEqual(config.generator.discriminator_learning_rate, 5e-5)
+                self.assertEqual(
+                    config.evaluation.canonical_source_policy,
+                    "exact",
+                )
+
+    def test_gan_step_ratio_configs_cover_six_dual_branch_cases(self):
+        config_root = (
+            ROOT
+            / "configs"
+            / "experiments"
+            / "ucf101_dtm_poison_strength_gan_step_ratios"
+        )
+        expected = {
+            (
+                f"malicious-clients-{client_count}_poison-20pct_"
+                "generator-epochs-50_generator-to-discriminator-steps-"
+                f"{generator_steps}to1.yaml"
+            ): (client_count, generator_steps)
+            for client_count in (1, 2)
+            for generator_steps in (10, 20, 40)
+        }
+        self.assertEqual(
+            sorted(expected),
+            sorted(path.name for path in config_root.glob("*.yaml")),
+        )
+        expected_clients = {1: ("1",), 2: ("0", "1")}
+        for name, (client_count, generator_steps) in expected.items():
+            with self.subTest(name=name):
+                config = load_scenario_config(config_root / name)
+                self.assertEqual(config.selected_branches, ("attack", "defended"))
+                self.assertTrue(config.defense.enabled)
+                self.assertEqual(
+                    config.attack.malicious_clients,
+                    expected_clients[client_count],
+                )
+                self.assertEqual(
+                    config.attack.malicious_client_count,
+                    client_count,
+                )
+                self.assertEqual(config.attack.poison_ratio, 0.2)
+                self.assertEqual(config.attack.condition_class, 0)
+                self.assertEqual(config.attack.assigned_train_label, 1)
+                self.assertEqual(config.attack.victim_eval_class, 0)
+                self.assertEqual(config.attack.goal_prediction_class, 1)
+                self.assertEqual(config.generator.epochs, 50)
+                self.assertEqual(config.generator.learning_rate, 3e-4)
+                self.assertEqual(config.generator.discriminator_learning_rate, 5e-5)
+                self.assertEqual(
+                    config.generator.generator_steps_per_batch,
+                    generator_steps,
+                )
+                self.assertEqual(
+                    config.generator.discriminator_steps_per_batch,
+                    1,
+                )
                 self.assertEqual(
                     config.evaluation.canonical_source_policy,
                     "exact",

@@ -1,0 +1,14 @@
+base_config: ../ucf101_fdmm_dtm_poison_0to1_defense.yaml
+overrides:
+  federation:
+    branches: [attack, defended]
+  generator:
+    epochs: 50
+    learning_rate: 0.0003
+    discriminator_learning_rate: 0.00005
+    generator_steps_per_batch: 40
+    discriminator_steps_per_batch: 1
+  attack:
+    malicious_clients: ["0", "1"]
+    malicious_client_count: 2
+    poison_ratio: 0.2

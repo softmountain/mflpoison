@@ -65,6 +65,10 @@ class TemporalAdaptiveGANConfig:
                 f"Unknown GAN variant: {self.gan_variant}. "
                 f"Expected one of {', '.join(self.VARIANTS)}"
             )
+        for field_name in ("g_steps", "d_steps"):
+            value = getattr(self, field_name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                raise ValueError(f"{field_name} must be a positive integer")
         if self.r1_interval < 1:
             raise ValueError("r1_interval must be at least 1")
         if self.diversity_warmup_epochs < 1:
@@ -102,4 +106,3 @@ class TemporalAdaptiveGANConfig:
             }
         defaults.update({key: value for key, value in kwargs.items() if value is not None})
         return cls(gan_variant=gan_variant, **defaults)
-

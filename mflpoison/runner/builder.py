@@ -181,6 +181,8 @@ def build_default_runner(
         "seed",
         "lr_g",
         "lr_d",
+        "g_steps",
+        "d_steps",
     }
     protected_overrides = sorted(
         set(generator_overrides) & protected_generator_fields
@@ -195,6 +197,10 @@ def build_default_runner(
         config.generator.learning_rate
         if config.generator.discriminator_learning_rate is None
         else config.generator.discriminator_learning_rate
+    )
+    generator_overrides["g_steps"] = config.generator.generator_steps_per_batch
+    generator_overrides["d_steps"] = (
+        config.generator.discriminator_steps_per_batch
     )
     if generator_variant == "dtm":
         from fed_multimodal.dtm_poison_gan import DTMGANConfig

@@ -130,5 +130,27 @@ class RunnerBuilderValidationTest(unittest.TestCase):
         self.assertEqual(legacy_trainer.config_overrides["lr_g"], 4e-4)
         self.assertEqual(legacy_trainer.config_overrides["lr_d"], 4e-4)
 
+    def test_generator_steps_per_batch_map_to_backend_fields(self):
+        runner = build_default_runner(
+            scenario_config(
+                lambda value: value["generator"].update(
+                    generator_steps_per_batch=20,
+                    discriminator_steps_per_batch=1,
+                )
+            )
+        )
+        trainer = runner.generator_lifecycle_factory("steps").trainer_factory(
+            "client-0"
+        )
+        self.assertEqual(trainer.config_overrides["g_steps"], 20)
+        self.assertEqual(trainer.config_overrides["d_steps"], 1)
+
+        default_runner = build_default_runner(scenario_config())
+        default_trainer = default_runner.generator_lifecycle_factory(
+            "default-steps"
+        ).trainer_factory("client-0")
+        self.assertEqual(default_trainer.config_overrides["g_steps"], 3)
+        self.assertEqual(default_trainer.config_overrides["d_steps"], 1)
+
 if __name__ == "__main__":
     unittest.main()

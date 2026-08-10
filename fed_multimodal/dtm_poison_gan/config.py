@@ -42,6 +42,10 @@ class DTMGANConfig:
     seed: int = 42
 
     def __post_init__(self):
+        for field_name in ("g_steps", "d_steps"):
+            value = getattr(self, field_name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                raise ValueError(f"{field_name} must be a positive integer")
         if self.diversity_warmup_epochs < 1:
             raise ValueError("diversity_warmup_epochs must be at least 1")
         if self.audio_seq_len < 1 or self.video_seq_len < 1:

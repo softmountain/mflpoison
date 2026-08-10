@@ -171,6 +171,8 @@ class GeneratorConfig:
     checkpoint_dir: Optional[str] = None
     loss: Mapping[str, Any] = field(default_factory=dict)
     options: Mapping[str, Any] = field(default_factory=dict)
+    generator_steps_per_batch: int = 3
+    discriminator_steps_per_batch: int = 1
 
     def __post_init__(self):
         if not self.family or not self.variant:
@@ -188,6 +190,13 @@ class GeneratorConfig:
             raise ValueError(
                 "generator.discriminator_learning_rate must be positive"
             )
+        for field_name in (
+            "generator_steps_per_batch",
+            "discriminator_steps_per_batch",
+        ):
+            value = getattr(self, field_name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                raise ValueError(f"generator.{field_name} must be a positive integer")
 
 
 @dataclass(frozen=True)
@@ -325,6 +334,28 @@ class ScenarioConfig:
             raise ValueError(f"unknown scenario section(s): {', '.join(unknown)}")
         if missing:
             raise ValueError(f"missing scenario section(s): {', '.join(missing)}")
+        generator_values = _mapping(values["generator"], "generator")
+        legacy_step_fields = {
+            "g_steps": "generator_steps_per_batch",
+            "d_steps": "discriminator_steps_per_batch",
+        }
+        for extension_name in ("loss", "options"):
+            extension = _mapping(
+                generator_values.get(extension_name),
+                f"generator.{extension_name}",
+            )
+            for legacy_name, field_name in legacy_step_fields.items():
+                if legacy_name not in extension:
+                    continue
+                if field_name in generator_values:
+                    raise ValueError(
+                        f"generator.{extension_name}.{legacy_name} conflicts with "
+                        f"generator.{field_name}"
+                    )
+                generator_values[field_name] = extension.pop(legacy_name)
+            if extension or extension_name in generator_values:
+                generator_values[extension_name] = extension
+        values["generator"] = generator_values
         sections = {
             name: _strict_section(section_type, values[name], name)
             for name, section_type in cls.SECTION_TYPES.items()

@@ -12,6 +12,8 @@ overrides:
     patience: 1
   generator:
     epochs: 1
+    generator_steps_per_batch: 10
+    discriminator_steps_per_batch: 1
     options:
       max_batches: 1
       log_interval: 1

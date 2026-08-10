@@ -60,6 +60,7 @@ flowchart TD
 | `configs/experiments/ucf101_dtm_poison_strength/*.yaml` | 基于主配置显式设置关键实验参数，并声明为 attack-only |
 | `configs/experiments/ucf101_dtm_poison_strength_defense/*.yaml` | 与攻击矩阵参数一一对应，启用服务器防御并声明为 defended-only |
 | `configs/experiments/ucf101_dtm_poison_strength_separate_gan_learning_rates/*.yaml` | 沿用 11 组攻击者参数，设置 `lrG=3e-4`、`lrD=5e-5` 并配对运行 attack/defended |
+| `configs/experiments/ucf101_dtm_poison_strength_gan_step_ratios/*.yaml` | 固定 20% 中毒、50 个生成器 epoch 和独立 GAN 学习率，比较 1/2 个恶意客户端下每 batch 的 10:1、20:1、40:1 生成器/鉴别器更新步数 |
 | `mflpoison/core/config.py` | 配置 dataclass、严格字段检查、`base_config` 合并 |
 
 派生配置只包含：
@@ -78,7 +79,7 @@ overrides:
 
 因此实验超参数差异留在 YAML 中，不需要为每组组合新增 Python 文件。入口还可以为批次阶段覆盖 seed、分支、共同 M* 路径和 canonical clean 路径；这些覆盖会先写回 `ScenarioConfig`，再把最终八段有效配置写入 `config_resolved.yaml`。
 
-`generator.learning_rate` 映射为 DTM 的 `lr_g`；可选的 `generator.discriminator_learning_rate` 映射为 `lr_d`。未设置后者时继续使用与 `lr_g` 相同的值，保持已有配置行为。
+`generator.learning_rate` 映射为 DTM 的 `lr_g`；可选的 `generator.discriminator_learning_rate` 映射为 `lr_d`。未设置后者时继续使用与 `lr_g` 相同的值，保持已有配置行为。`generator.generator_steps_per_batch` 和 `generator.discriminator_steps_per_batch` 分别映射为后端的 `g_steps` 与 `d_steps`；它们控制每个 dataloader batch 的更新次数，默认值为 3 和 1，并会写入 `config_resolved.yaml`。
 
 ### 2.2 八段配置到代码对象
 

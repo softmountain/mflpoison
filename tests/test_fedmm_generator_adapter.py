@@ -1,9 +1,12 @@
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 import torch
 
+from fed_multimodal.dtm_poison_gan import DTMGANTrainer
 from mflpoison.adapters.fedmm.generator import FedMMGeneratorTrainer
 from mflpoison.artifacts import load_generator_artifact, save_generator_artifact
 from mflpoison.core.types import GlobalSnapshot, ModelSpec
@@ -58,6 +61,22 @@ class _TestFedMMGeneratorTrainer(FedMMGeneratorTrainer):
 
 
 class FedMMGeneratorAdapterTest(unittest.TestCase):
+    def test_dtm_steps_are_applied_per_dataloader_batch(self):
+        trainer = object.__new__(DTMGANTrainer)
+        trainer.generator = mock.Mock()
+        trainer.discriminator = mock.Mock()
+        trainer.config = SimpleNamespace(d_steps=1, g_steps=20)
+        trainer.dataloader = [object(), object()]
+        trainer.train_d_step = mock.Mock(return_value={"d_loss": 1.0})
+        trainer.train_g_step = mock.Mock(return_value={"g_loss": 1.0})
+
+        trainer.train_epoch(epoch=7, log_interval=0)
+
+        self.assertEqual(trainer.train_d_step.call_count, 2)
+        self.assertEqual(trainer.train_g_step.call_count, 40)
+        trainer.generator.train.assert_called_once_with()
+        trainer.discriminator.train.assert_called_once_with()
+
     def test_relative_output_path_persists_a_reloadable_manifest(self):
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as directory:
             output_dir = Path(directory).relative_to(Path.cwd())

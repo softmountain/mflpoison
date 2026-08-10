@@ -46,13 +46,14 @@ python -m mflpoison.runner \
 - `ucf101_dtm_poison_strength/*.yaml`：使用人类可读文件名配置恶意客户端数、中毒比例和生成器 epoch，并明确声明为 attack-only；调度器为其注入共同 M* 和 canonical clean 路径。
 - `ucf101_dtm_poison_strength_defense/*.yaml`：与攻击强度矩阵逐项对应，但启用服务器防御并声明为 defended-only。
 - `ucf101_dtm_poison_strength_separate_gan_learning_rates/*.yaml`：沿用 11 组攻击者设置，显式使用 `lrG=3e-4`、`lrD=5e-5`，并在同一任务中配对运行 attack 与 defended。
+- `ucf101_dtm_poison_strength_gan_step_ratios/*.yaml`：固定 20% 中毒、50 个生成器 epoch 和上述独立学习率，比较 1/2 个恶意客户端下每 batch 的生成器:鉴别器更新步数 10:1、20:1、40:1。
 
 完整配置包含八部分：
 
 - `dataset`：FedMM 特征根、fold、alpha、类别数和模态形状；
 - `model`：分类模型构造参数和可选初始 checkpoint；
 - `federation`：预训练/攻击轮数、客户端采样、本地训练、seed、分支以及 M* 生成/复用；
-- `generator`：DTM 变体、生命周期和训练参数；`learning_rate` 对应 `lrG`，可选的 `discriminator_learning_rate` 对应 `lrD`，省略后兼容旧行为并使用与 `lrG` 相同的值；
+- `generator`：DTM 变体、生命周期和训练参数；`learning_rate` 对应 `lrG`，可选的 `discriminator_learning_rate` 对应 `lrD`，省略后兼容旧行为并使用与 `lrG` 相同的值；`generator_steps_per_batch` 和 `discriminator_steps_per_batch` 分别控制每个 dataloader batch 的生成器与鉴别器更新次数，默认 3:1；
 - `attack`：恶意客户端、中毒预算、注入方式和 0→1 标签语义；
 - `defense`：检测器、裁剪器、聚合器和决策策略；
 - `evaluation`：test、攻击与检测指标开关，以及可选 canonical clean 产物路径；
